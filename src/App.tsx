@@ -149,7 +149,7 @@ export default function App() {
                 
                 // Fetch fresh weather for the new coordinates
                 try {
-                  const data = await fetchWeather(myLocation.latitude, myLocation.longitude, myLocation.timezone);
+                  const data = await fetchWeather(myLocation.latitude, myLocation.longitude, myLocation.timezone, myLocation.name);
                   if (!isMounted.current) return;
                   saveWeatherData(getCityKey(myLocation), data);
                   setState(prev => ({
@@ -215,6 +215,7 @@ export default function App() {
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isSwiping, setIsSwiping] = useState(false);
+  const [isSwipeCommitted, setIsSwipeCommitted] = useState(false);
   const [slideDirection, setSlideDirection] = useState<'left' | 'right' | null>(null);
   const [showSearch, setShowSearch] = useState(false);
   const [showCityManager, setShowCityManager] = useState(false);
@@ -264,7 +265,7 @@ export default function App() {
     }
 
     try {
-      const data = await fetchWeather(location.latitude, location.longitude, location.timezone);
+      const data = await fetchWeather(location.latitude, location.longitude, location.timezone, location.name);
       saveWeatherData(getCityKey(location), data);
       
       setState(prev => {
@@ -619,26 +620,38 @@ export default function App() {
     const onSwipeLeft = () => {
       if (state.showSettings || showSearch || showCityManager) {
         setIsSwiping(false);
+        setIsSwipeCommitted(false);
         return;
       }
+      setIsSwipeCommitted(true);
       handleSwipe('left');
     };
 
     const onSwipeRight = () => {
       if (state.showSettings || showSearch || showCityManager) {
         setIsSwiping(false);
+        setIsSwipeCommitted(false);
         return;
       }
+      setIsSwipeCommitted(true);
       handleSwipe('right');
     };
 
     const onSwipeStart = () => {
       if (state.showSettings || showSearch || showCityManager) return;
       setIsSwiping(true);
+      setIsSwipeCommitted(false);
     };
 
     const onSwipeCancel = () => {
       setIsSwiping(false);
+      setIsSwipeCommitted(false);
+    };
+
+    const onScrollStart = () => {
+      // If a scroll starts, ensure we aren't stuck in a swipe state
+      setIsSwiping(false);
+      setIsSwipeCommitted(false);
     };
 
     const onPullRefresh = () => {
@@ -650,6 +663,7 @@ export default function App() {
     window.addEventListener('swipe-start', onSwipeStart);
     window.addEventListener('swipe-cancel', onSwipeCancel);
     window.addEventListener('pull-refresh', onPullRefresh);
+    window.addEventListener('scroll', onScrollStart, { passive: true });
 
     return () => {
       cleanup();
@@ -658,6 +672,7 @@ export default function App() {
       window.removeEventListener('swipe-start', onSwipeStart);
       window.removeEventListener('swipe-cancel', onSwipeCancel);
       window.removeEventListener('pull-refresh', onPullRefresh);
+      window.removeEventListener('scroll', onScrollStart);
     };
   }, [state.locations.length, state.activeLocationIndex]);
 
@@ -673,7 +688,10 @@ export default function App() {
         initial={{ opacity: 0, x: slideDirection ? xOffset : 0 }}
         animate={{ opacity: 1, x: 0 }}
         exit={{ opacity: 0, x: -xOffset }}
-        onAnimationComplete={() => setIsSwiping(false)}
+        onAnimationComplete={() => {
+          setIsSwiping(false);
+          setIsSwipeCommitted(false);
+        }}
         transition={{ 
           type: "spring",
           damping: 30,
@@ -730,17 +748,28 @@ export default function App() {
   useEffect(() => {
     const handleScroll = () => {
       const currentScrollY = window.scrollY;
+      const scrollDiff = currentScrollY - lastScrollY.current;
       
-      // Only show header at the very top as requested
-      if (currentScrollY < 40) {
+      // 1. Always show at the very top
+      if (currentScrollY < 10) {
         setHeaderVisible(true);
-      } else {
+      } 
+      // 2. Show on scroll UP (user intent to see header)
+      else if (scrollDiff < -5) {
+        setHeaderVisible(true);
+      }
+      // 3. Hide on scroll DOWN
+      else if (scrollDiff > 5 && currentScrollY > 100) {
         setHeaderVisible(false);
       }
       
       lastScrollY.current = currentScrollY;
     };
     window.addEventListener('scroll', handleScroll, { passive: true });
+    
+    // Ensure header visible on mount
+    setHeaderVisible(true);
+    
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
@@ -761,7 +790,11 @@ export default function App() {
             y: (headerVisible && !isSwiping) ? 0 : -100,
             opacity: (headerVisible && !isSwiping) ? 1 : 0,
           }}
-          transition={{ duration: 0.3, ease: 'easeOut' }}
+          transition={{ 
+            duration: 0.3, 
+            ease: [0.25, 0.46, 0.45, 0.94],
+            opacity: { duration: (isSwiping || isSwipeCommitted) ? 0.05 : 0.3 } // Near instant hide during swipe
+          }}
         >
           {/* Add City Button - Top Left */}
           <motion.div className="absolute left-6 top-6 pointer-events-auto">
@@ -773,9 +806,12 @@ export default function App() {
               className="w-12 h-12 bg-app-text/5 border border-app-border rounded-full flex items-center justify-center text-app-text active:scale-95 transition-all shadow-xl"
               initial={false}
               animate={{
-                opacity: state.showSettings || showCityManager ? 0 : 1,
-                pointerEvents: state.showSettings || showCityManager ? 'none' : 'auto',
+                opacity: state.showSettings || showCityManager || isSwiping || isSwipeCommitted ? 0 : 1,
+                pointerEvents: state.showSettings || showCityManager || isSwiping || isSwipeCommitted ? 'none' : 'auto',
                 scale: state.showSettings || showCityManager ? 0.8 : 1,
+              }}
+              transition={{ 
+                duration: (isSwiping || isSwipeCommitted) ? 0 : 0.3 
               }}
             >
               <Icons.LayoutGrid className="w-5 h-5 text-app-text-dim" strokeWidth={1.5} />
@@ -787,6 +823,10 @@ export default function App() {
             <motion.button 
               onClick={toggleSettings}
               className="group active:scale-95 transition-all w-12 h-12 flex items-center justify-center"
+              animate={{
+                opacity: isSwiping || isSwipeCommitted ? 0 : 1,
+              }}
+              transition={{ duration: (isSwiping || isSwipeCommitted) ? 0 : 0.3 }}
             >
               <AnimatePresence mode="wait">
                 {state.showSettings ? (
@@ -822,10 +862,11 @@ export default function App() {
                 key={activeLocation?.id || activeLocation?.name || 'loading'}
                 initial={{ opacity: 0, y: -10 }}
                 animate={{ 
-                  opacity: state.showSettings || showCityManager ? 0 : 1,
+                  opacity: state.showSettings || showCityManager || isSwiping || isSwipeCommitted ? 0 : 1,
                   y: 0 
                 }}
                 exit={{ opacity: 0, y: 10 }}
+                transition={{ duration: (isSwiping || isSwipeCommitted) ? 0 : 0.3 }}
                 className="flex flex-col items-center"
               >
                 <span className="text-[17px] font-semibold text-app-text">{activeLocation?.name || 'Loading...'}</span>

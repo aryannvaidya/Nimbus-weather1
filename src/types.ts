@@ -45,6 +45,7 @@ export interface WeatherData {
     description: string;
     color: string;
     recommendation: string;
+    lastUpdated?: string;
     pm10?: number;
     pm2_5?: number;
     no2?: number;

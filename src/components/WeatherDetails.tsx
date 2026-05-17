@@ -75,9 +75,26 @@ export default function WeatherDetails({ weather, settings }: WeatherDetailsProp
             <span className="text-[12px] font-bold tracking-[0.1em] uppercase text-app-text-dim">Air Quality</span>
           </div>
           {aqi && (
-            <div className="flex items-center gap-1.5 bg-app-text/5 px-2.5 py-1 rounded-full border border-app-border">
-              <div className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ backgroundColor: aqi.color }} />
-              <span className="text-[10px] font-bold text-app-text-dim uppercase tracking-widest">Live</span>
+            <div className="flex items-center gap-2">
+              {(() => {
+                const updatedTime = aqi.lastUpdated ? new Date(aqi.lastUpdated.replace(' ', 'T')) : null;
+                const ageMinutes = updatedTime ? (Date.now() - updatedTime.getTime()) / 60000 : 0;
+                if (ageMinutes > 120) {
+                  return (
+                    <div className="flex items-center gap-1.5 bg-orange-500/10 px-2.5 py-1 rounded-full border border-orange-500/20">
+                      <span className="text-[9px] font-black text-orange-400 uppercase tracking-wider">
+                        ⚠ Data from {Math.round(ageMinutes/60)}h ago
+                      </span>
+                    </div>
+                  );
+                }
+                return (
+                  <div className="flex items-center gap-1.5 bg-app-text/5 px-2.5 py-1 rounded-full border border-app-border">
+                    <div className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ backgroundColor: aqi.color }} />
+                    <span className="text-[10px] font-bold text-app-text-dim uppercase tracking-widest">Live</span>
+                  </div>
+                );
+              })()}
             </div>
           )}
         </div>
@@ -94,9 +111,29 @@ export default function WeatherDetails({ weather, settings }: WeatherDetailsProp
                 <span className="text-6xl font-[200] tracking-tighter text-app-text leading-none">
                   {aqi.usAqi}
                 </span>
-                <span className="text-[17px] font-semibold tracking-tight leading-tight mt-2" style={{ color: aqi.color }}>
-                  {aqi.description}
-                </span>
+                <div className="flex flex-col mt-2">
+                  <span className="text-[17px] font-semibold tracking-tight leading-tight" style={{ color: aqi.color }}>
+                    {aqi.description}
+                  </span>
+                  {aqi.lastUpdated && (
+                    <span className="text-[10px] text-app-text-dim/60 font-bold uppercase tracking-wider mt-1">
+                      Updated: {(() => {
+                        try {
+                          const date = new Date(aqi.lastUpdated.replace(' ', 'T'));
+                          // Using en-IN locale and Asia/Kolkata timezone as requested for reliable India-centric display if needed, 
+                          // though native format with city timezone is usually preferred.
+                          return date.toLocaleTimeString("en-IN", {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                            hour12: true
+                          });
+                        } catch (e) {
+                          return aqi.lastUpdated;
+                        }
+                      })()}
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
 

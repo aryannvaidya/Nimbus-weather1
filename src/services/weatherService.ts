@@ -4,6 +4,7 @@ const GEO_API_URL = 'https://geocoding-api.open-meteo.com/v1/search';
 const WEATHER_API_URL = 'https://api.open-meteo.com/v1/forecast';
 const AIR_QUALITY_API_URL = 'https://air-quality-api.open-meteo.com/v1/air-quality';
 const ASTRONOMY_API_URL = 'https://astronomy-api.open-meteo.com/v1/astronomy';
+const WAQI_TOKEN = 'c1cc82042fab6a9c422dda7813df7f8428f785e4';
 
 export const fetchWithTimeout = async (url: string, options: any = {}, timeout = 25000, retries = 3): Promise<Response> => {
   const controller = new AbortController();
@@ -168,6 +169,64 @@ function pm10ToAQI(val: number) {
   return 500;
 }
 
+export async function fetchWAQIAQI(lat: number, lon: number, cityName?: string) {
+  try {
+    const cleanCityName = cityName ? cityName.toLowerCase().split(',')[0].trim() : null;
+    let data = null;
+
+    // Try 1: City name endpoint
+    if (cleanCityName) {
+      const url = `https://api.waqi.info/feed/${cleanCityName}/?token=${WAQI_TOKEN}`;
+      const response = await fetchWithTimeout(url, {}, 8000, 1);
+      if (response.ok) {
+        const json = await response.json();
+        if (json.status === 'ok' && json.data) {
+          const updatedStr = json.data.time?.s;
+          if (updatedStr) {
+            const updatedTime = new Date(updatedStr.replace(' ', 'T'));
+            const ageMinutes = (Date.now() - updatedTime.getTime()) / 60000;
+            // If data is fresh (less than 2 hours), use it immediately
+            if (ageMinutes < 120) {
+              return json.data;
+            }
+            // If stale, keep it as candidate but try geo fallback
+            data = json.data;
+          } else {
+            data = json.data;
+          }
+        }
+      }
+    }
+
+    // Try 2: Geo-based lookup (either as primary if no city name, or because city data was stale/missing)
+    const geoUrl = `https://api.waqi.info/feed/geo:${lat};${lon}/?token=${WAQI_TOKEN}`;
+    const geoRes = await fetchWithTimeout(geoUrl, {}, 8000, 1);
+    if (geoRes.ok) {
+      const geoJson = await geoRes.json();
+      if (geoJson.status === 'ok' && geoJson.data) {
+        const geoUpdatedStr = geoJson.data.time?.s;
+        if (geoUpdatedStr) {
+          const geoUpdatedTime = new Date(geoUpdatedStr.replace(' ', 'T'));
+          const geoAgeMinutes = (Date.now() - geoUpdatedTime.getTime()) / 60000;
+          
+          // If geo data is fresher than city data, or city data doesn't exist, use geo
+          if (!data || geoAgeMinutes < 120) {
+            return geoJson.data;
+          }
+        } else if (!data) {
+          return geoJson.data;
+        }
+      }
+    }
+    
+    // Return whatever we found (even if stale) if no fresh data was found in either attempt
+    return data;
+  } catch (err) {
+    console.warn('WAQI fetch failed:', err);
+    return null;
+  }
+}
+
 function calculateUSAQI(pm25: number, pm10: number) {
   return Math.max(pm25ToAQI(pm25), pm10ToAQI(pm10));
 }
@@ -206,6 +265,8 @@ export async function fetchWeatherBulk(locations: Location[]): Promise<Record<nu
     return null;
   });
 
+  const waqiPromises = locations.map(l => fetchWAQIAQI(l.latitude, l.longitude, l.name));
+
   // Astronomy API is single-location only. Fetch in parallel.
   const astroPromises = locations.map(l => 
     fetchWithTimeout(`${ASTRONOMY_API_URL}?latitude=${l.latitude}&longitude=${l.longitude}&daily=sunrise,sunset,moon_phase&timezone=auto`)
@@ -216,9 +277,10 @@ export async function fetchWeatherBulk(locations: Location[]): Promise<Record<nu
       })
   );
 
-  const [weatherRes, aqiRes, astroResults] = await Promise.all([
+  const [weatherRes, aqiRes, waqiResults, astroResults] = await Promise.all([
     weatherPromise, 
     aqiPromise, 
+    Promise.all(waqiPromises),
     Promise.all(astroPromises)
   ]);
 
@@ -236,6 +298,7 @@ export async function fetchWeatherBulk(locations: Location[]): Promise<Record<nu
     // If multiple coords, result is array. If single coord, result is object.
     const weatherData = Array.isArray(weatherDataArray) ? weatherDataArray[index] : weatherDataArray;
     const aqiData = Array.isArray(aqiDataArray) ? aqiDataArray[index] : aqiDataArray;
+    const waqiData = waqiResults[index];
     const astroData = astroResults[index];
 
     if (!weatherData?.current) return;
@@ -246,7 +309,24 @@ export async function fetchWeatherBulk(locations: Location[]): Promise<Record<nu
     let no2: number | undefined;
     let o3: number | undefined;
     let co: number | undefined;
+    let waqiLastUpdated: string | undefined;
     
+    // Priority 1: WAQI data (official city/station stats)
+    if (waqiData) {
+      usAqi = waqiData.aqi;
+      waqiLastUpdated = waqiData.time?.s;
+      
+      // Map WAQI pollutants if available
+      if (waqiData.iaqi) {
+        pm2_5 = waqiData.iaqi.pm25?.v;
+        pm10 = waqiData.iaqi.pm10?.v;
+        no2 = waqiData.iaqi.no2?.v;
+        o3 = waqiData.iaqi.o3?.v;
+        co = waqiData.iaqi.co?.v;
+      }
+    }
+
+    // Priority 2: Fallback to Open-Meteo Air Quality (model based) if WAQI failed or missed values
     if (aqiData?.current) {
       const omUsAqi = aqiData.current.us_aqi || 0;
       const omEuAqi = aqiData.current.european_aqi || 0;
@@ -255,51 +335,46 @@ export async function fetchWeatherBulk(locations: Location[]): Promise<Record<nu
       
       const calculatedAqi = calculateUSAQI(omPm2_5, omPm10);
       
-      // Heuristic for high-pollution regions where model outliers occur frequently in US AQI
-      // In the India region, the CAMS model (used by Open-Meteo) often overestimates PM2.5 spikes
-      // compared to ground sensors. We use a more aggressive pollutant-based anchor.
-      const lat = locations[index].latitude;
-      const lon = locations[index].longitude;
-      const isIndiaRegion = lat > 6 && lat < 38 && lon > 68 && lon < 98;
-      const isDelhi = lat > 28.3 && lat < 28.9 && lon > 76.8 && lon < 77.5;
+      // Only use OM AQI if WAQI didn't provide one
+      if (usAqi === undefined) {
+        const lat = locations[index].latitude;
+        const lon = locations[index].longitude;
+        const isIndiaRegion = lat > 6 && lat < 38 && lon > 68 && lon < 98;
+        const isDelhi = lat > 28.3 && lat < 28.9 && lon > 76.8 && lon < 77.5;
 
-      if (isIndiaRegion || isDelhi) {
-        // For India, trust the PM-based calculation if it's lower than the model's unified AQI
-        // or if both are high, choose the more reasonable lower bound.
-        if (omUsAqi > 100) {
-          usAqi = Math.min(omUsAqi, calculatedAqi);
-          
-          // Severe outlier correction: if US AQI > 250 but pollutant calc is significantly lower
-          if (omUsAqi > 250 && calculatedAqi < omUsAqi * 0.75) {
-             usAqi = calculatedAqi;
+        if (isIndiaRegion || isDelhi) {
+          if (omUsAqi > 100) {
+            usAqi = Math.min(omUsAqi, calculatedAqi);
+            if (omUsAqi > 250 && calculatedAqi < omUsAqi * 0.75) {
+               usAqi = calculatedAqi;
+            }
+            if (isDelhi && usAqi > 250 && omEuAqi < 100) {
+               usAqi = Math.max(calculatedAqi, 160);
+            }
+          } else {
+            usAqi = omUsAqi || calculatedAqi;
           }
-          
-          // Final cap/sanity check for Delhi specifically if discrepancy is massive
-          if (isDelhi && usAqi > 250 && omEuAqi < 100) {
-             usAqi = Math.max(calculatedAqi, 160);
+        } else if (omUsAqi > 200) {
+          if (calculatedAqi < omUsAqi * 0.6) {
+            usAqi = calculatedAqi;
+          } 
+          else if (omEuAqi > 0 && omEuAqi < 100 && omUsAqi > 300) {
+            usAqi = Math.min(500, omUsAqi, calculatedAqi);
+          }
+          else {
+            usAqi = Math.min(500, omUsAqi, calculatedAqi);
           }
         } else {
           usAqi = omUsAqi || calculatedAqi;
         }
-      } else if (omUsAqi > 200) {
-        if (calculatedAqi < omUsAqi * 0.6) {
-          usAqi = calculatedAqi;
-        } 
-        else if (omEuAqi > 0 && omEuAqi < 100 && omUsAqi > 300) {
-          usAqi = Math.min(500, omUsAqi, calculatedAqi);
-        }
-        else {
-          usAqi = Math.min(500, omUsAqi, calculatedAqi);
-        }
-      } else {
-        usAqi = omUsAqi || calculatedAqi;
       }
       
-      pm10 = omPm10;
-      pm2_5 = omPm2_5;
-      no2 = aqiData.current.nitrogen_dioxide;
-      o3 = aqiData.current.ozone;
-      co = aqiData.current.carbon_monoxide;
+      // Fill missing pollutants from Open-Meteo
+      if (pm10 === undefined) pm10 = omPm10;
+      if (pm2_5 === undefined) pm2_5 = omPm2_5;
+      if (no2 === undefined) no2 = aqiData.current.nitrogen_dioxide;
+      if (o3 === undefined) o3 = aqiData.current.ozone;
+      if (co === undefined) co = aqiData.current.carbon_monoxide;
     }
 
     const aqiInfo = usAqi !== undefined ? getAQIInfo(usAqi) : null;
@@ -341,6 +416,7 @@ export async function fetchWeatherBulk(locations: Location[]): Promise<Record<nu
         description: aqiInfo.label,
         color: aqiInfo.color,
         recommendation: aqiInfo.recommendation,
+        lastUpdated: waqiLastUpdated,
         pm10: pm10 ?? 0,
         pm2_5: pm2_5 ?? 0,
         no2: no2 ?? 0,
@@ -355,7 +431,7 @@ export async function fetchWeatherBulk(locations: Location[]): Promise<Record<nu
   return results;
 }
 
-export async function fetchWeather(lat: number, lon: number, timezone: string): Promise<WeatherData> {
+export async function fetchWeather(lat: number, lon: number, timezone: string, cityName?: string): Promise<WeatherData> {
   if (lat === undefined || lon === undefined || isNaN(lat) || isNaN(lon)) {
     throw new Error('Invalid coordinates provided to weather service');
   }
@@ -406,7 +482,14 @@ export async function fetchWeather(lat: number, lon: number, timezone: string): 
     return null;
   });
 
-  const [weatherRes, aqiRes, astroRes] = await Promise.all([weatherPromise, aqiPromise, astroPromise]);
+  const waqiPromise = fetchWAQIAQI(safeLat, safeLon, cityName);
+
+  const [weatherRes, aqiRes, astroRes, waqiData] = await Promise.all([
+    weatherPromise, 
+    aqiPromise, 
+    astroPromise,
+    waqiPromise
+  ]);
 
   if (!weatherRes || !weatherRes.ok) {
     const errorText = weatherRes ? await weatherRes.text().catch(() => 'No details') : 'Network error';
@@ -426,7 +509,22 @@ export async function fetchWeather(lat: number, lon: number, timezone: string): 
   let no2: number | undefined;
   let o3: number | undefined;
   let co: number | undefined;
+  let waqiLastUpdated: string | undefined;
+
+  // Priority 1: WAQI data
+  if (waqiData) {
+    usAqi = waqiData.aqi;
+    waqiLastUpdated = waqiData.time?.s;
+    if (waqiData.iaqi) {
+      pm2_5 = waqiData.iaqi.pm25?.v;
+      pm10 = waqiData.iaqi.pm10?.v;
+      no2 = waqiData.iaqi.no2?.v;
+      o3 = waqiData.iaqi.o3?.v;
+      co = waqiData.iaqi.co?.v;
+    }
+  }
   
+  // Priority 2: Fallback to Open-Meteo
   if (aqiData?.current) {
     const omUsAqi = aqiData.current.us_aqi || 0;
     const omEuAqi = aqiData.current.european_aqi || 0;
@@ -436,43 +534,45 @@ export async function fetchWeather(lat: number, lon: number, timezone: string): 
     // Calculate manual AQI from raw pollutants for validation
     const calculatedAqi = calculateUSAQI(omPm2_5, omPm10);
     
-    // Heuristic for high-pollution regions where model outliers occur frequently in US AQI
-    const isIndiaRegion = lat > 6 && lat < 38 && lon > 68 && lon < 98;
-    const isDelhi = lat > 28.3 && lat < 28.9 && lon > 76.8 && lon < 77.5;
+    if (usAqi === undefined) {
+      // Heuristic for high-pollution regions where model outliers occur frequently in US AQI
+      const isIndiaRegion = lat > 6 && lat < 38 && lon > 68 && lon < 98;
+      const isDelhi = lat > 28.3 && lat < 28.9 && lon > 76.8 && lon < 77.5;
 
-    if (isIndiaRegion || isDelhi) {
-      if (omUsAqi > 100) {
-        usAqi = Math.min(omUsAqi, calculatedAqi);
-        if (omUsAqi > 250 && calculatedAqi < omUsAqi * 0.75) {
-           usAqi = calculatedAqi;
+      if (isIndiaRegion || isDelhi) {
+        if (omUsAqi > 100) {
+          usAqi = Math.min(omUsAqi, calculatedAqi);
+          if (omUsAqi > 250 && calculatedAqi < omUsAqi * 0.75) {
+             usAqi = calculatedAqi;
+          }
+          if (isDelhi && usAqi > 250 && omEuAqi < 100) {
+             usAqi = Math.max(calculatedAqi, 160);
+          }
+        } else {
+          usAqi = omUsAqi || calculatedAqi;
         }
-        if (isDelhi && usAqi > 250 && omEuAqi < 100) {
-           usAqi = Math.max(calculatedAqi, 160);
-        }
-      } else {
-        usAqi = omUsAqi || calculatedAqi;
-      }
-    } else if (omUsAqi > 200) {
-      if (calculatedAqi < omUsAqi * 0.6) {
-        usAqi = calculatedAqi;
-      } else if (omEuAqi > 0 && omEuAqi < 100 && omUsAqi > 300) {
-        if (isIndiaRegion) {
-          usAqi = Math.max(calculatedAqi, 180);
+      } else if (omUsAqi > 200) {
+        if (calculatedAqi < omUsAqi * 0.6) {
+          usAqi = calculatedAqi;
+        } else if (omEuAqi > 0 && omEuAqi < 100 && omUsAqi > 300) {
+          if (isIndiaRegion) {
+            usAqi = Math.max(calculatedAqi, 180);
+          } else {
+            usAqi = Math.min(500, omUsAqi, calculatedAqi);
+          }
         } else {
           usAqi = Math.min(500, omUsAqi, calculatedAqi);
         }
       } else {
-        usAqi = Math.min(500, omUsAqi, calculatedAqi);
+        usAqi = omUsAqi || calculatedAqi;
       }
-    } else {
-      usAqi = omUsAqi || calculatedAqi;
     }
     
-    pm10 = omPm10;
-    pm2_5 = omPm2_5;
-    no2 = aqiData.current.nitrogen_dioxide;
-    o3 = aqiData.current.ozone;
-    co = aqiData.current.carbon_monoxide;
+    if (pm10 === undefined) pm10 = omPm10;
+    if (pm2_5 === undefined) pm2_5 = omPm2_5;
+    if (no2 === undefined) no2 = aqiData.current.nitrogen_dioxide;
+    if (o3 === undefined) o3 = aqiData.current.ozone;
+    if (co === undefined) co = aqiData.current.carbon_monoxide;
   }
 
   const aqiInfo = usAqi !== undefined ? getAQIInfo(usAqi) : null;
@@ -518,6 +618,7 @@ export async function fetchWeather(lat: number, lon: number, timezone: string): 
       description: aqiInfo.label,
       color: aqiInfo.color,
       recommendation: aqiInfo.recommendation,
+      lastUpdated: waqiLastUpdated,
       pm10: pm10 ?? 0,
       pm2_5: pm2_5 ?? 0,
       no2: no2 ?? 0,
