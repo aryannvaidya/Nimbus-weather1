@@ -5,7 +5,6 @@ import { Icons, WeatherIcon } from './WeatherIcons';
 import { Settings, WeatherData, Location } from '../types';
 import { cn, GLASS_STYLE_SUBTLE } from '../lib/utils';
 import { Haptic } from '../lib/haptics';
-import WidgetView from './WidgetView';
 
 interface SettingsScreenProps {
   settings: Settings;
@@ -13,6 +12,7 @@ interface SettingsScreenProps {
   onClose: () => void;
   activeWeather?: WeatherData;
   activeLocation?: Location;
+  panelStackRef: React.MutableRefObject<(() => void)[]>;
 }
 
 const Section = ({ title, children }: { title: string; children: React.ReactNode }) => (
@@ -58,7 +58,7 @@ const ToggleRow = ({ label, description, value, onToggle, hapticEnabled }: { lab
   </div>
 );
 
-const SegmentedControl = ({ value, options, onChange, hapticEnabled }: { value: string; options: { label: string; value: string }[], onChange: (val: any) => void; hapticEnabled: boolean }) => (
+const SegmentedControl = ({ value, options, onChange, hapticEnabled, layoutId }: { value: string; options: { label: string; value: string }[], onChange: (val: any) => void; hapticEnabled: boolean; layoutId: string }) => (
   <div className="flex p-1 bg-app-text/[0.04] rounded-[14px] w-full relative">
     {options.map((opt) => {
       const isSelected = value === opt.value;
@@ -79,7 +79,7 @@ const SegmentedControl = ({ value, options, onChange, hapticEnabled }: { value: 
           {opt.label}
           {isSelected && (
             <motion.div
-              layoutId="segment-indicator"
+              layoutId={layoutId}
               className="absolute inset-0 bg-app-surface rounded-[10px] shadow-[0_2px_8px_rgba(0,0,0,0.12)] border border-app-border -z-10 will-change-transform"
               transition={{ 
                 type: "spring", 
@@ -102,7 +102,13 @@ const SelectRow = ({ label, value, options, onChange, hapticEnabled }: { label: 
       <p className="text-[13px] font-semibold text-app-text tracking-tight">{label}</p>
       <p className="text-[12px] font-medium text-app-text-dim opacity-50 uppercase tracking-widest">{value}</p>
     </div>
-    <SegmentedControl value={value} options={options} onChange={onChange} hapticEnabled={hapticEnabled} />
+    <SegmentedControl 
+      value={value} 
+      options={options} 
+      onChange={onChange} 
+      hapticEnabled={hapticEnabled} 
+      layoutId={`segment-${label.toLowerCase().replace(/\s+/g, '-')}`}
+    />
   </div>
 );
 
@@ -225,15 +231,60 @@ const SliderRow = ({
   );
 };
 
-const SettingsScreen = ({ settings: globalSettings, onUpdate, onClose, activeWeather, activeLocation }: SettingsScreenProps) => {
+const PoweredByPill = ({ label, icon }: { label: string; icon: string }) => (
+  <div className="flex items-center gap-3 px-6 py-3.5 rounded-full bg-white/[0.03] border border-white/10 backdrop-blur-xl shadow-inner">
+    <span className="text-[20px] filter drop-shadow-sm leading-none flex items-center justify-center">{icon}</span>
+    <span className="text-[15px] font-bold text-app-text/90 tracking-tight whitespace-nowrap">{label}</span>
+  </div>
+);
+
+const LoopingWeatherIcon = () => {
+  const [index, setIndex] = useState(0);
+  const icons = ['Sun', 'Cloud', 'CloudLightning', 'CloudRain', 'Moon'];
+  
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setIndex((prev) => (prev + 1) % icons.length);
+    }, 2000);
+    return () => clearInterval(timer);
+  }, []);
+
+  return (
+    <AnimatePresence mode="wait">
+      <motion.div
+        key={icons[index]}
+        initial={{ opacity: 0, scale: 0.8, rotate: -10 }}
+        animate={{ opacity: 1, scale: 1, rotate: 0 }}
+        exit={{ opacity: 0, scale: 1.1, rotate: 10 }}
+        transition={{ duration: 0.5, ease: "easeOut" }}
+      >
+        <WeatherIcon 
+          name={icons[index] as any} 
+          className="w-16 h-16 drop-shadow-[0_0_15px_rgba(255,255,255,0.2)]" 
+          style="coloured" 
+        />
+      </motion.div>
+    </AnimatePresence>
+  );
+};
+
+const SettingsScreen = ({ settings: globalSettings, onUpdate, onClose, activeWeather, activeLocation, panelStackRef }: SettingsScreenProps) => {
   const [localSettings, setLocalSettings] = useState(globalSettings);
   const [showAbout, setShowAbout] = useState(false);
-  const [showWidgetSetup, setShowWidgetSetup] = useState(false);
   const [activeSubView, setActiveSubView] = useState<'none' | 'agreement' | 'privacy'>('none');
+
+  const pushPanel = (closeFn: () => void, name: string) => {
+    window.history.pushState({ panel: name }, "");
+    panelStackRef.current.push(closeFn);
+  };
+
+  const handleBack = () => {
+    window.history.back();
+  };
 
   useEffect(() => {
     const handleSwipeLeft = () => {
-      if (showAbout || showWidgetSetup || activeSubView !== 'none') return;
+      if (showAbout || activeSubView !== 'none') return;
       // Increase thresholds
       Haptic.medium(localSettings.hapticEnabled);
       const newRain = Math.min(100, localSettings.rainThreshold + 5);
@@ -244,7 +295,7 @@ const SettingsScreen = ({ settings: globalSettings, onUpdate, onClose, activeWea
     };
 
     const handleSwipeRight = () => {
-      if (showAbout || showWidgetSetup || activeSubView !== 'none') return;
+      if (showAbout || activeSubView !== 'none') return;
       // Decrease thresholds
       Haptic.medium(localSettings.hapticEnabled);
       const newRain = Math.max(0, localSettings.rainThreshold - 5);
@@ -260,7 +311,7 @@ const SettingsScreen = ({ settings: globalSettings, onUpdate, onClose, activeWea
       window.removeEventListener('swipe-left', handleSwipeLeft);
       window.removeEventListener('swipe-right', handleSwipeRight);
     };
-  }, [localSettings, showAbout, showWidgetSetup, activeSubView, onUpdate]);
+  }, [localSettings, showAbout, activeSubView, onUpdate]);
 
   const updateSetting = <T extends keyof Settings>(key: T, value: Settings[T]) => {
     const newSettings = { ...localSettings, [key]: value };
@@ -309,50 +360,7 @@ const SettingsScreen = ({ settings: globalSettings, onUpdate, onClose, activeWea
         content: "We respect your digital privacy. This Application is designed to function with minimal data footprint. Your precise location data is processed locally to fetch hyper-local weather alerts and is never transmitted to our servers for storage or profiling.\n\nWe do not sell, rent, or lease your personal data to third parties. Any analytical data collected is fully anonymized and used solely to improve application performance and stability.\n\nYour saved locations and settings are stored locally on your device via browser storage. We have no access to this data. For integrated services like Open-Meteo, please refer to their respective privacy documentation regarding IP-based data processing."
       }
     };
-    return <SubView title={views[activeSubView].title} content={views[activeSubView].content} onClose={() => setActiveSubView('none')} />;
-  }
-
-  if (showWidgetSetup && activeWeather && activeLocation) {
-    return (
-      <motion.div 
-        initial={{ opacity: 0, x: 20 }}
-        animate={{ opacity: 1, x: 0 }}
-        exit={{ opacity: 0, x: 20 }}
-        className="fixed inset-0 z-[100] bg-app-bg overflow-y-auto"
-      >
-        <div className="max-w-[390px] mx-auto min-h-screen px-6 pt-[calc(env(safe-area-inset-top)+24px)] pb-24 flex flex-col items-center">
-          <header className="w-full flex items-center mb-12">
-            <button 
-              onClick={() => {
-                Haptic.light(localSettings.hapticEnabled);
-                setShowWidgetSetup(false);
-              }}
-              className="w-10 h-10 rounded-full bg-app-text/5 flex items-center justify-center text-app-text"
-            >
-              <Icons.ChevronLeft className="w-6 h-6" />
-            </button>
-            <h2 className="ml-4 text-xl font-bold text-app-text">Widget Preview</h2>
-          </header>
-
-          <WidgetView 
-            weather={activeWeather} 
-            location={activeLocation} 
-            settings={localSettings} 
-          />
-
-          <div className="mt-12 w-full space-y-8">
-            <div className="p-6 rounded-[32px] bg-app-surface border border-app-border">
-              <h3 className="text-sm font-bold text-app-text mb-2 tracking-tight">How to add to Home Screen</h3>
-              <ol className="space-y-4 text-[13px] text-app-text-dim list-decimal pl-4">
-                <li>Tap the <span className="text-app-text font-bold">Share</span> button in your browser's toolbar.</li>
-                <li>Scroll down and selecting <span className="text-app-text font-bold">Add to Home Screen</span>.</li>
-                <li>Long-press the app icon on your home screen and select <span className="text-app-text font-bold">Add Widget</span> (if supported by your OS / PWA launcher).</li>
-              </ol>
-            </div>
-          </div>
-        </div>
-      </motion.div>
-    );
+    return <SubView title={views[activeSubView].title} content={views[activeSubView].content} onClose={() => handleBack()} />;
   }
 
   if (showAbout) {
@@ -363,41 +371,78 @@ const SettingsScreen = ({ settings: globalSettings, onUpdate, onClose, activeWea
       exit={{ opacity: 0, x: 20 }}
       className="fixed inset-0 z-[60] bg-app-bg overflow-y-auto about-page touch-pan-y"
     >
-        <div className="max-w-[390px] mx-auto min-h-screen px-6 pt-[calc(env(safe-area-inset-top)+24px)] pb-24">
-          <header className="flex items-center mb-16 px-1">
+        <div className="max-w-[390px] mx-auto min-h-screen px-6 pt-[calc(env(safe-area-inset-top)+24px)] pb-32">
+          <header className="flex items-center mb-12 px-1">
              <button 
               onClick={() => {
-                Haptic.light(localSettings.hapticEnabled);
-                setShowAbout(false);
+                handleBack();
               }}
               className="flex items-center text-app-text"
             >
-              <Icons.ChevronLeft className="w-7 h-7 mr-3" strokeWidth={2} />
-              <span className="text-[20px] font-semibold text-app-text">About Weather</span>
+              <span className="text-[17px] font-medium text-app-text">Back</span>
             </button>
           </header>
 
-          <div className="flex flex-col items-center text-center px-4">
-             <div className="mb-6">
-                <div className="w-[100px] h-[100px] bg-gradient-to-b from-blue-400 to-blue-600 rounded-[28%] flex items-center justify-center shadow-xl relative overflow-hidden">
-                   <div className="absolute inset-0 bg-white/10" />
-                   <WeatherIcon name="Sun" className="w-16 h-16 drop-shadow-lg" style="coloured" />
-                </div>
-             </div>
-             
-             <h2 className="text-[24px] font-bold text-app-text mb-1">Weather</h2>
-             <p className="text-app-text-dim/60 text-[13px] mb-12">Version: 16.29.4</p>
+          <div className="flex flex-col items-center px-4">
+             <motion.div 
+               style={{ 
+                 perspective: 1000 
+               }}
+               initial={{ opacity: 0, y: 20 }}
+               animate={{ opacity: 1, y: 0 }}
+               className="flex flex-col items-center text-center mb-16 w-full"
+             >
+                <motion.div 
+                  className="flex items-center gap-5 mb-4"
+                  animate={{ 
+                    y: [0, -10, 0],
+                  }}
+                  transition={{ 
+                    duration: 4, 
+                    repeat: Infinity, 
+                    ease: "easeInOut" 
+                  }}
+                >
+                   <motion.div 
+                     className="relative"
+                     animate={{ 
+                       x: [0, 5, -5, 0],
+                       y: [0, -10, 10, 0],
+                       rotate: [0, -2, 2, 0]
+                     }}
+                     transition={{ 
+                       duration: 6, 
+                       repeat: Infinity, 
+                       ease: "easeInOut" 
+                     }}
+                   >
+                     <LoopingWeatherIcon />
+                   </motion.div>
+                   <h1 className="text-[32px] font-black tracking-[-0.04em] text-app-text uppercase">
+                     Nimbus Weather
+                   </h1>
+                </motion.div>
+                <div className="h-px w-12 bg-app-text/10" />
+             </motion.div>
              
              <div className="bg-app-surface/40 backdrop-blur-md border border-app-border rounded-[24px] overflow-hidden w-full mb-16 shadow-sm">
                 <button 
-                  onClick={() => setActiveSubView('agreement')}
+                  onClick={() => {
+                    Haptic.light(localSettings.hapticEnabled);
+                    setActiveSubView('agreement');
+                    pushPanel(() => setActiveSubView('none'), 'agreement');
+                  }}
                   className="w-full px-6 py-5 flex items-center justify-between text-left active:bg-white/5 transition-colors border-b border-app-border/50"
                 >
                    <span className="text-[16px] text-app-text font-medium">Weather User Agreement</span>
                    <Icons.ChevronRight className="w-5 h-5 text-app-text-dim/30" />
                 </button>
                 <button 
-                  onClick={() => setActiveSubView('privacy')}
+                  onClick={() => {
+                    Haptic.light(localSettings.hapticEnabled);
+                    setActiveSubView('privacy');
+                    pushPanel(() => setActiveSubView('none'), 'privacy');
+                  }}
                   className="w-full px-6 py-5 flex items-center justify-between text-left active:bg-white/5 transition-colors"
                 >
                    <span className="text-[16px] text-app-text font-medium">Weather Privacy Notice</span>
@@ -405,9 +450,21 @@ const SettingsScreen = ({ settings: globalSettings, onUpdate, onClose, activeWea
                 </button>
              </div>
 
-             <div className="flex flex-col items-center gap-1.5 opacity-30">
-                <p className="text-[10px] font-medium tracking-[0.1em] uppercase">Built with precision</p>
-                <p className="text-[10px]">&copy; 2026 Weather Labs</p>
+             <div className="w-full mb-20">
+                <p className="text-[14px] font-black text-app-text/40 uppercase tracking-[0.25em] mb-10 text-center">Powered by</p>
+                <div className="flex flex-wrap justify-center gap-4">
+                   <PoweredByPill label="Open-Meteo" icon="🌤️" />
+                   <PoweredByPill label="WAQI" icon="💨" />
+                   <PoweredByPill label="Leaflet" icon="🗺️" />
+                   <PoweredByPill label="Geolocation API" icon="📍" />
+                </div>
+             </div>
+
+             <div className="flex flex-col items-center gap-1 text-center">
+                <p className="text-[11px] font-bold text-app-text uppercase tracking-[0.15em] opacity-30">Built with precision</p>
+                <p className="text-[11px] font-bold text-app-text opacity-30">&copy; 2026 Nimbus Weather</p>
+                <div className="h-10" />
+                <p className="text-[12px] font-black text-app-text/40 opacity-50 tracking-widest uppercase">Version 1.0.0</p>
              </div>
           </div>
         </div>
@@ -545,14 +602,6 @@ const SettingsScreen = ({ settings: globalSettings, onUpdate, onClose, activeWea
         </Section>
 
         <Section title="General">
-          <LinkRow 
-            label="Home Screen Widget"
-            value="Installation guide"
-            hapticEnabled={localSettings.hapticEnabled}
-            onClick={() => {
-              setShowWidgetSetup(true);
-            }}
-          />
           <ToggleRow 
             label="Haptic feedback" 
             description="Subtle vibrations for buttons and scrolling"
@@ -565,6 +614,7 @@ const SettingsScreen = ({ settings: globalSettings, onUpdate, onClose, activeWea
             hapticEnabled={localSettings.hapticEnabled}
             onClick={() => {
               setShowAbout(true);
+              pushPanel(() => setShowAbout(false), 'about');
             }}
           />
         </Section>

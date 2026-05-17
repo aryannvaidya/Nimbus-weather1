@@ -32,6 +32,28 @@
   -webkit-tap-highlight-color: transparent;
   -webkit-touch-callout: none;
   user-select: none;
+  /* Hide scrollbar on all elements */
+  scrollbar-width: none;        /* Firefox */
+  -ms-overflow-style: none;     /* IE/Edge */
+}
+
+*::-webkit-scrollbar {
+  display: none;                /* Chrome, Safari, Brave */
+  width: 0;
+  height: 0;
+}
+
+/* Make sure scroll still works, just hidden */
+.city-card,
+.settings-panel,
+.about-page,
+.hourly-forecast-container,
+.scroll-container,
+body {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
 
 input, textarea, [contenteditable="true"] {
@@ -60,7 +82,7 @@ input, textarea, [contenteditable="true"] {
 }
 
 /* Smooth scrolling and prevent bounce */
-body, .scroll-container {
+.scroll-container {
   -webkit-overflow-scrolling: touch;
   overflow-scrolling: touch;
 }

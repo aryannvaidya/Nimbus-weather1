@@ -17,6 +17,7 @@ export interface WeatherData {
     temperature: number;
     relativeHumidity: number;
     weatherCode: number;
+    summaryCode?: number; // Today's daily weather code for summary
     windSpeed: number;
     windDirection: number;
     apparentTemperature: number;
@@ -31,6 +32,8 @@ export interface WeatherData {
     weatherCode: number[];
     precipitationProbability: number[];
     windDirection: number[];
+    windSpeed?: number[];
+    snowfall?: number[];
   };
   daily: {
     time: string[];
@@ -49,6 +52,9 @@ export interface WeatherData {
     color: string;
     recommendation: string;
     lastUpdated?: string;
+    freshnessLabel?: string;
+    isStale?: boolean;
+    isUnavailable?: boolean;
     pm10?: number;
     pm2_5?: number;
     no2?: number;
