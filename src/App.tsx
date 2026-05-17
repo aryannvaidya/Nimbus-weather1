@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { formatTemp } from './lib/units';
 import { Location, WeatherData, WeatherState, Settings } from './types';
-import { fetchWeather, fetchWeatherBulk, getMoonPhaseInfo } from './services/weatherService';
+import { fetchWeather, fetchWeatherBulk, getMoonPhaseInfo, getCurrentHourIndex } from './services/weatherService';
 import { getCachedWeatherData, saveWeatherData, STORAGE_KEYS, getCityKey, CACHE_EXPIRY } from './lib/storage';
 import { initGestures } from './lib/gestures';
 import WeatherSkeleton from './components/WeatherSkeleton';
@@ -19,7 +19,6 @@ import CityManager from './components/CityManager';
 import AlertsDisplay from './components/AlertsDisplay';
 import { Haptic } from './lib/haptics';
 import { format } from 'date-fns';
-import WidgetView from './components/WidgetView';
 
 const DEFAULT_LOCATION: Location = {
   id: 2643743,
@@ -36,7 +35,7 @@ const INITIAL_SETTINGS: Settings = {
   unitPressure: 'mmHg',
   unitVisibility: 'km',
   unitPrecipitation: 'mm',
-  iconStyle: 'outline',
+  iconStyle: 'coloured',
   theme: 'black',
   hapticEnabled: true,
   notificationTime: '08:00',
@@ -490,20 +489,29 @@ export default function App() {
     const w = activeWeather;
     const s = state.settings;
     const alerts: any[] = [];
+    
+    // Get the current hour index for the location
+    const hourIndex = getCurrentHourIndex(w.timezone || 'UTC', w.hourly.time);
+    
+    console.log("Current hour index:", hourIndex);
+    console.log("Current precip %:", w.hourly.precipitationProbability[hourIndex]);
+    console.log("Next hour precip %:", w.hourly.precipitationProbability[hourIndex + 1]);
+    console.log("Timezone:", w.timezone);
 
     // 1. Rain Alerts
-    const rainProb = w.hourly.precipitationProbability[0];
-    if (s.alertRain && rainProb >= s.rainThreshold) {
+    const nextHourIndex = hourIndex + 1;
+    const nextRainProb = w.hourly.precipitationProbability[nextHourIndex] || 0;
+    if (s.alertRain && nextRainProb >= 70) {
       alerts.push({
         id: 'rain-alert',
         type: 'rain',
-        title: 'Rain Expected',
-        message: `There is a ${rainProb}% chance of rain in the next hour.`
+        title: '🌧️ Rain Expected',
+        message: `${nextRainProb}% chance of rain soon.`
       });
     }
 
     // 2. Snow Alerts
-    const snowAmount = w.hourly.snowfall?.[0] || 0;
+    const snowAmount = w.hourly.snowfall?.[hourIndex] || 0;
     if (s.alertDaily && snowAmount > 0) { // Using daily alert toggle for snow too
        alerts.push({
         id: 'snow-alert',
@@ -515,16 +523,28 @@ export default function App() {
 
     // 3. Thunderstorm check
     if (s.stormThreshold && [95, 96, 99].includes(w.current.weatherCode)) {
-      alerts.push({
-        id: 'storm-alert',
-        type: 'storm',
-        title: 'Thunderstorm Warning',
-        message: 'A thunderstorm is currently being observed in your area.'
-      });
+      const isSevere = w.current.weatherCode === 99 || w.current.windSpeed > 20; // 20m/s (~72km/h) is very high
+      
+      if (isSevere) {
+        alerts.push({
+          id: 'severe-storm-alert',
+          type: 'severe_storm',
+          title: 'Severe Thunderstorm',
+          message: 'Intense thunderstorm with potential for heavy hail or damaging winds.'
+        });
+      } else {
+        alerts.push({
+          id: 'storm-alert',
+          type: 'storm',
+          title: 'Thunderstorm Warning',
+          message: 'A thunderstorm is currently being observed in your area.'
+        });
+      }
     }
 
     // 4. Severe weather (Using weather codes for heavy storms/hail)
-    if (s.alertSevere && [82, 86, 99].includes(w.current.weatherCode)) {
+    // We remove 99 from here to avoid duplicate alerts, as it's now handled by severe_storm
+    if (s.alertSevere && [82, 86].includes(w.current.weatherCode)) {
       alerts.push({
         id: 'severe-alert',
         type: 'severe',
@@ -584,11 +604,71 @@ export default function App() {
     setState(prev => ({ ...prev, settings }));
   };
 
+  const [showExitToast, setShowExitToast] = useState(false);
+  
+  // Back button handling logic
+  const panelStackRef = useRef<(() => void)[]>([]);
+
+  useEffect(() => {
+    // 1. Initialize on app start: Push an initial state so the first back press doesn't immediately exit
+    if (window.history.state?.panel !== 'home') {
+      window.history.pushState({ panel: "home" }, "");
+    }
+
+    let backPressCount = 0;
+    let toastTimer: any = null;
+
+    // 2. Global popstate listener to handle back button
+    const handlePopState = (e: PopStateEvent) => {
+      if (panelStackRef.current.length > 0) {
+        backPressCount = 0;
+        setShowExitToast(false);
+        // Close the topmost open panel
+        const closePanel = panelStackRef.current.pop();
+        if (closePanel) closePanel();
+      } else {
+        // Handle exit confirmation on home screen
+        backPressCount++;
+        
+        if (backPressCount === 1) {
+          setShowExitToast(true);
+          window.history.pushState({ panel: "home" }, ""); // re-push so we get another popstate
+          
+          if (toastTimer) clearTimeout(toastTimer);
+          toastTimer = setTimeout(() => { 
+            backPressCount = 0; 
+            setShowExitToast(false);
+          }, 2000);
+        }
+      }
+    };
+
+    window.addEventListener("popstate", handlePopState);
+    return () => {
+      window.removeEventListener("popstate", handlePopState);
+      if (toastTimer) clearTimeout(toastTimer);
+    };
+  }, []);
+
+  const pushPanel = (closeFn: () => void, name: string) => {
+    window.history.pushState({ panel: name }, "");
+    panelStackRef.current.push(closeFn);
+  };
+
+  const handleBack = () => {
+    window.history.back();
+  };
+
   const toggleSettings = () => {
-    requestAnimationFrame(() => {
-      Haptic.medium(state.settings.hapticEnabled);
-      setState(prev => ({ ...prev, showSettings: !prev.showSettings }));
-    });
+    if (!state.showSettings) {
+      requestAnimationFrame(() => {
+        Haptic.medium(state.settings.hapticEnabled);
+        setState(prev => ({ ...prev, showSettings: true }));
+        pushPanel(() => setState(prev => ({ ...prev, showSettings: false })), 'settings');
+      });
+    } else {
+      handleBack();
+    }
   };
 
   // Manual refresh logic
@@ -781,13 +861,13 @@ export default function App() {
   return (
     <div className="min-h-screen bg-app-bg text-app-text font-sans selection:bg-app-text/20 transition-colors duration-500">
       <AtmosphereFX 
-        weatherCode={activeWeather?.current.weatherCode ?? 0}
+        weatherCode={activeWeather?.current.summaryCode ?? activeWeather?.current.weatherCode ?? 0}
         isDay={activeWeather?.current.isDay ?? true}
         moonPhase={getMoonPhaseInfo().phase}
         locationName={activeLocation?.name ?? ''}
       />
 
-      <div className="fixed top-0 left-1/2 -translate-x-1/2 w-full max-w-[390px] z-[100] pointer-events-none pt-[env(safe-area-inset-top)]">
+      <div id="ui-overlay" className="fixed top-0 left-1/2 -translate-x-1/2 w-full max-w-[390px] z-[100] pointer-events-none pt-[env(safe-area-inset-top)]">
         <motion.div 
           className="w-full h-32 relative"
           initial={false}
@@ -801,12 +881,12 @@ export default function App() {
             opacity: { duration: (isSwiping || isSwipeCommitted) ? 0 : 0.12 } // Instant hide during swipe
           }}
         >
-          {/* Add City Button - Top Left */}
           <motion.div className="absolute left-6 top-8 pointer-events-auto">
             <motion.button 
               onClick={() => {
                 Haptic.light(state.settings.hapticEnabled);
                 setShowCityManager(true);
+                pushPanel(() => setShowCityManager(false), 'citymanager');
               }}
               className="w-12 h-12 bg-app-text/5 border border-app-border rounded-full flex items-center justify-center text-app-text active:scale-95 transition-all shadow-xl"
               initial={false}
@@ -887,7 +967,7 @@ export default function App() {
                   </motion.div>
                 )}
 
-                <div className="flex gap-1.5 mt-1.5">
+                <div id="city-dots" className="flex gap-1.5 mt-1.5">
                   {state.locations.map((_, i) => (
                     <button 
                       key={i} 
@@ -920,56 +1000,61 @@ export default function App() {
             onClose={toggleSettings} 
             activeWeather={activeWeather}
             activeLocation={activeLocation}
+            panelStackRef={panelStackRef}
           />
         )}
       </AnimatePresence>
 
       <AnimatePresence>
         {showCityManager && (
-          <CityManager 
-            locations={state.locations}
-            activeLocationIndex={state.activeLocationIndex}
-            weatherData={state.weatherData}
-            hapticEnabled={state.settings.hapticEnabled}
-            onSelect={(index) => {
-              Haptic.light(state.settings.hapticEnabled);
-              setState(prev => ({ ...prev, activeLocationIndex: index }));
-              setShowCityManager(false);
-            }}
-            onAdd={() => {
-              Haptic.medium(state.settings.hapticEnabled);
-              setShowSearch(true);
-              setShowCityManager(false);
-            }}
-            onRemove={removeLocation}
-            onReorder={reorderLocations}
-            onClose={() => {
-              Haptic.light(state.settings.hapticEnabled);
-              setShowCityManager(false);
-            }}
-          />
+            <CityManager 
+              locations={state.locations}
+              activeLocationIndex={state.activeLocationIndex}
+              weatherData={state.weatherData}
+              hapticEnabled={state.settings.hapticEnabled}
+              panelStackRef={panelStackRef}
+              onSelect={(index) => {
+                Haptic.light(state.settings.hapticEnabled);
+                setState(prev => ({ ...prev, activeLocationIndex: index }));
+                handleBack();
+              }}
+              onAdd={() => {
+                Haptic.medium(state.settings.hapticEnabled);
+                // First close city manager
+                handleBack();
+                // Then open search (with a small delay for animation)
+                setTimeout(() => {
+                  setShowSearch(true);
+                  pushPanel(() => setShowSearch(false), 'search');
+                }, 300);
+              }}
+              onRemove={removeLocation}
+              onReorder={reorderLocations}
+              onClose={() => {
+                handleBack();
+              }}
+            />
         )}
       </AnimatePresence>
 
       <AnimatePresence>
         {showSearch && (
-          <SearchBar 
-            hapticEnabled={state.settings.hapticEnabled}
-            onSelect={(loc) => {
-              Haptic.success(state.settings.hapticEnabled);
-              addLocation(loc);
-              setShowSearch(false);
-            }} 
-            onClose={() => {
-              Haptic.light(state.settings.hapticEnabled);
-              setShowSearch(false);
-            }}
-          />
+            <SearchBar 
+              hapticEnabled={state.settings.hapticEnabled}
+              onSelect={(loc) => {
+                Haptic.success(state.settings.hapticEnabled);
+                addLocation(loc);
+                handleBack();
+              }} 
+              onClose={() => {
+                handleBack();
+              }}
+            />
         )}
       </AnimatePresence>
 
       <main 
-        className="max-w-[390px] mx-auto px-6 pt-[calc(env(safe-area-inset-top)+112px)] pb-32 min-h-screen relative touch-pan-y"
+        className="max-w-[390px] mx-auto px-6 pt-[calc(env(safe-area-inset-top)+112px)] pb-32 min-h-screen relative touch-pan-y bottom-content"
       >
         {/* Pull to refresh logic handled by gestures.ts */}
         
@@ -1113,6 +1198,19 @@ export default function App() {
           )}
         </AnimatePresence>
       </main>
+
+      <AnimatePresence>
+        {showExitToast && (
+          <motion.div 
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 20 }}
+            className="fixed bottom-12 left-1/2 -translate-x-1/2 z-[200] px-6 py-3 bg-app-text text-app-bg rounded-2xl text-[13px] font-bold shadow-2xl pointer-events-none"
+          >
+            Press back again to exit
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

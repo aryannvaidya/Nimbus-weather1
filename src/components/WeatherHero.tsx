@@ -1,7 +1,7 @@
 import React from 'react';
 import { WeatherData, Location, Settings } from '../types';
 import { WeatherIcon, Icons } from './WeatherIcons';
-import { getWeatherInfo, getMoonPhaseInfo } from '../services/weatherService';
+import { getHourlyIcon, getMoonPhaseInfo } from '../services/weatherService';
 import { formatTemp } from '../lib/units';
 import { motion } from 'motion/react';
 import { format, parseISO } from 'date-fns';
@@ -18,7 +18,7 @@ interface WeatherHeroProps {
 }
 
 export default function WeatherHero({ weather, location, settings, onRefresh, isRefreshing }: WeatherHeroProps) {
-  const info = getWeatherInfo(weather.current.weatherCode, weather.current.isDay);
+  const info = getHourlyIcon(weather.current.precipitation, !weather.current.isDay);
   const moonPhase = getMoonPhaseInfo(weather.daily.moonPhase?.[0] ?? 0);
 
   const formatDate = (dateStr: string) => {

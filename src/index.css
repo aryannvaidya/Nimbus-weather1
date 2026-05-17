@@ -1,6 +1,39 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;500;600&display=swap');
 @import "tailwindcss";
 
+*,
+*::before,
+*::after {
+  /* Firefox */
+  scrollbar-width: none !important;
+  
+  /* IE and Edge */
+  -ms-overflow-style: none !important;
+}
+
+/* Chrome, Safari, Brave, WebView */
+*::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+  background: transparent !important;
+}
+
+*::-webkit-scrollbar-track {
+  display: none !important;
+  background: transparent !important;
+}
+
+*::-webkit-scrollbar-thumb {
+  display: none !important;
+  background: transparent !important;
+}
+
+*::-webkit-scrollbar-corner {
+  display: none !important;
+  background: transparent !important;
+}
+
 @theme {
   --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --color-app-bg: var(--bg-primary);
@@ -60,22 +93,9 @@ input, textarea, [contenteditable="true"] {
 }
 
 /* Smooth scrolling and prevent bounce */
-body, .scroll-container {
+.scroll-container {
   -webkit-overflow-scrolling: touch;
   overflow-scrolling: touch;
-}
-
-body {
-  @apply bg-app-bg text-app-text antialiased overflow-x-hidden;
-  font-family: var(--font-sans);
-  transition: background-color 0.15s ease-out, color 0.15s ease-out;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  touch-action: pan-y pinch-zoom;
-  padding-top: env(safe-area-inset-top);
-  padding-bottom: env(safe-area-inset-bottom);
-  overscroll-behavior: none;
 }
 
 /* Enable hardware acceleration for common animated elements */
@@ -88,30 +108,120 @@ body {
 
 /* Optimize scrolling performance */
 html {
+  scrollbar-width: none !important;
+  -ms-overflow-style: none !important;
+  overflow: -moz-scrollbars-none !important;
   scroll-behavior: smooth;
   overscroll-behavior: none;
+  width: 100%;
+  min-height: 100vh;
+  min-height: 100dvh;
+  margin: 0;
+  padding: 0;
+  background: var(--bg-primary);
+  box-sizing: border-box;
 }
 
-/* Completely remove scrollbars */
-*::-webkit-scrollbar {
+html::-webkit-scrollbar { 
+  display: none !important; 
+  width: 0 !important;
+}
+
+body {
+  @apply bg-app-bg text-app-text antialiased overflow-x-hidden;
+  scrollbar-width: none !important;
+  -ms-overflow-style: none !important;
+  overflow-x: hidden !important;
+  font-family: var(--font-sans);
+  transition: background-color 0.15s ease-out, color 0.15s ease-out;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  touch-action: pan-y pinch-zoom;
+  overscroll-behavior: none;
+  width: 100%;
+  min-height: 100vh;
+  min-height: 100dvh;
+  margin: 0;
+  padding: 0;
+  /* Extend into system bar areas */
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+  box-sizing: border-box;
+}
+
+body::-webkit-scrollbar { 
+  display: none !important;
+  width: 0 !important;
+}
+
+/* Hourly forecast horizontal scroll */
+.hourly-forecast,
+.hourly-container,
+.hourly-scroll,
+[class*="hourly"] {
+  scrollbar-width: none !important;
+  -ms-overflow-style: none !important;
+  overflow-x: auto !important;
+  overflow-y: hidden !important;
+  -webkit-overflow-scrolling: touch !important;
+}
+
+.hourly-forecast::-webkit-scrollbar,
+.hourly-container::-webkit-scrollbar,
+.hourly-scroll::-webkit-scrollbar,
+[class*="hourly"]::-webkit-scrollbar {
   display: none !important;
   width: 0 !important;
   height: 0 !important;
 }
 
-* {
+/* All scrollable panels */
+.city-card,
+.settings-panel,
+.about-page,
+.map-page,
+.add-city-panel,
+[class*="panel"],
+[class*="card"],
+[class*="container"],
+[class*="scroll"],
+[class*="page"] {
   scrollbar-width: none !important;
   -ms-overflow-style: none !important;
 }
 
-/* Glass effect animations */
-@keyframes fadeIn {
-  from { opacity: 0; transform: translateY(10px); }
-  to { opacity: 1; transform: translateY(0); }
+.city-card::-webkit-scrollbar,
+.settings-panel::-webkit-scrollbar,
+.about-page::-webkit-scrollbar,
+.map-page::-webkit-scrollbar,
+.add-city-panel::-webkit-scrollbar,
+[class*="panel"]::-webkit-scrollbar,
+[class*="card"]::-webkit-scrollbar,
+[class*="container"]::-webkit-scrollbar,
+[class*="scroll"]::-webkit-scrollbar,
+[class*="page"]::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
 }
 
-.animate-fade-in {
-  animation: fadeIn 0.5s ease-out forwards;
+#root, .app-container {
+  background: var(--bg-primary);
+  min-height: 100dvh;
+}
+
+/* Top bar — sit just below status bar */
+#ui-overlay, #top-bar, .safe-top {
+  padding-top: calc(env(safe-area-inset-top) + 8px);
+}
+
+/* Bottom content — don't hide behind nav bar */
+.bottom-content,
+.hourly-forecast,
+#city-dots,
+.safe-bottom {
+  padding-bottom: calc(env(safe-area-inset-bottom) + 16px);
 }
 
 /* Custom Range Input Styling for iOS-like feel */
@@ -142,8 +252,6 @@ input[type=range]::-webkit-slider-thumb {
   z-index: 10;
   transition: transform 0.2s cubic-bezier(0.22, 1, 0.36, 1);
 }
-
-/* Track styling already handled */
 
 /* Clear default tracks to avoid double-line effect */
 input[type=range]::-webkit-slider-runnable-track {

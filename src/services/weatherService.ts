@@ -6,6 +6,42 @@ const AIR_QUALITY_API_URL = 'https://air-quality-api.open-meteo.com/v1/air-quali
 const ASTRONOMY_API_URL = 'https://astronomy-api.open-meteo.com/v1/astronomy';
 const WAQI_TOKEN = 'c1cc82042fab6a9c422dda7813df7f8428f785e4';
 
+const citySlugs: Record<string, string> = {
+  "london":  "london/city-hall",
+  "delhi":   "delhi",
+  "mumbai":  "mumbai",
+  "beijing": "beijing",
+  "paris":   "paris",
+  "tokyo":   "tokyo",
+};
+
+const getAQIUrl = (cityName: string, lat: number, lon: number) => {
+  const name = cityName.toLowerCase();
+  const slug = Object.keys(citySlugs).find(k => name.includes(k));
+
+  if (slug) {
+    return `https://api.waqi.info/feed/${citySlugs[slug]}/?token=${WAQI_TOKEN}`;
+  }
+
+  return `https://api.waqi.info/feed/geo:${lat};${lon}/?token=${WAQI_TOKEN}`;
+};
+
+const validateAQIFreshness = (timeString: string) => {
+  if (!timeString) return { fresh: false, label: "Unknown", ageHours: 99 };
+  const updated = new Date(timeString.replace(' ', 'T'));
+  const ageHours = (Date.now() - updated.getTime()) / (1000 * 60 * 60);
+
+  if (ageHours < 1) {
+    return { fresh: true, label: "Live", ageHours };
+  } else if (ageHours < 3) {
+    return { fresh: true, label: `${Math.round(ageHours)}h ago`, ageHours };
+  } else if (ageHours < 6) {
+    return { fresh: false, label: `${Math.round(ageHours)}h ago ⚠️`, ageHours };
+  } else {
+    return { fresh: false, label: "Stale data ⚠️", ageHours };
+  }
+};
+
 export const fetchWithTimeout = async (url: string, options: any = {}, timeout = 25000, retries = 3): Promise<Response> => {
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeout);
@@ -255,56 +291,44 @@ function pm10ToAQI(val: number) {
 
 export async function fetchWAQIAQI(lat: number, lon: number, cityName?: string) {
   try {
-    const cleanCityName = cityName ? cityName.toLowerCase().split(',')[0].trim() : null;
-    let data = null;
-
-    // Try 1: City name endpoint
-    if (cleanCityName) {
-      const url = `https://api.waqi.info/feed/${cleanCityName}/?token=${WAQI_TOKEN}`;
-      const response = await fetchWithTimeout(url, {}, 8000, 1);
-      if (response.ok) {
-        const json = await response.json();
-        if (json.status === 'ok' && json.data) {
-          const updatedStr = json.data.time?.s;
-          if (updatedStr) {
-            const updatedTime = new Date(updatedStr.replace(' ', 'T'));
-            const ageMinutes = (Date.now() - updatedTime.getTime()) / 60000;
-            // If data is fresh (less than 2 hours), use it immediately
-            if (ageMinutes < 120) {
-              return json.data;
-            }
-            // If stale, keep it as candidate but try geo fallback
-            data = json.data;
-          } else {
-            data = json.data;
-          }
-        }
-      }
-    }
-
-    // Try 2: Geo-based lookup (either as primary if no city name, or because city data was stale/missing)
-    const geoUrl = `https://api.waqi.info/feed/geo:${lat};${lon}/?token=${WAQI_TOKEN}`;
-    const geoRes = await fetchWithTimeout(geoUrl, {}, 8000, 1);
-    if (geoRes.ok) {
-      const geoJson = await geoRes.json();
-      if (geoJson.status === 'ok' && geoJson.data) {
-        const geoUpdatedStr = geoJson.data.time?.s;
-        if (geoUpdatedStr) {
-          const geoUpdatedTime = new Date(geoUpdatedStr.replace(' ', 'T'));
-          const geoAgeMinutes = (Date.now() - geoUpdatedTime.getTime()) / 60000;
-          
-          // If geo data is fresher than city data, or city data doesn't exist, use geo
-          if (!data || geoAgeMinutes < 120) {
-            return geoJson.data;
-          }
-        } else if (!data) {
-          return geoJson.data;
-        }
-      }
-    }
+    const url = getAQIUrl(cityName || '', lat, lon);
+    const response = await fetchWithTimeout(url, {}, 8000, 1);
     
-    // Return whatever we found (even if stale) if no fresh data was found in either attempt
-    return data;
+    if (!response.ok) return null;
+    const json = await response.json();
+    
+    if (json.status !== 'ok' || !json.data) return null;
+    
+    let aqiData = json.data;
+    const timeStr = aqiData.time?.s;
+    const freshness = validateAQIFreshness(timeStr);
+
+    // If stale, try alternate geo station as fallback
+    if (!freshness.fresh && cityName) {
+      const geoUrl = `https://api.waqi.info/feed/geo:${lat};${lon}/?token=${WAQI_TOKEN}`;
+      const geoRes = await fetchWithTimeout(geoUrl, {}, 8000, 1);
+      
+      if (geoRes.ok) {
+        const geoJson = await geoRes.json();
+        if (geoJson.status === 'ok' && geoJson.data) {
+          const fallbackTimeStr = geoJson.data.time?.s;
+          const fallbackFreshness = validateAQIFreshness(fallbackTimeStr);
+          
+          // Use geo fallback if it's fresher than the city-specific one
+          if (fallbackFreshness.ageHours < freshness.ageHours) {
+            aqiData = geoJson.data;
+          }
+        }
+      }
+    }
+
+    const finalFreshness = validateAQIFreshness(aqiData.time?.s);
+    return {
+      ...aqiData,
+      freshnessLabel: finalFreshness.label,
+      isStale: !finalFreshness.fresh,
+      isUnavailable: finalFreshness.ageHours > 6
+    };
   } catch (err) {
     console.warn('WAQI fetch failed:', err);
     return null;
@@ -324,7 +348,7 @@ export async function fetchWeatherBulk(locations: Location[]): Promise<Record<nu
   const weatherParams = new URLSearchParams({
     latitude: lats,
     longitude: lons,
-    hourly: 'temperature_2m,weather_code,precipitation_probability,wind_direction_10m',
+    hourly: 'temperature_2m,weather_code,precipitation_probability,wind_direction_10m,snowfall,wind_speed_10m',
     daily: 'weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,uv_index_max,precipitation_sum',
     current: 'temperature_2m,relative_humidity_2m,apparent_temperature,is_day,weather_code,wind_speed_10m,wind_direction_10m,visibility,surface_pressure,precipitation',
     timezone: 'auto',
@@ -384,6 +408,20 @@ export async function fetchWeatherBulk(locations: Location[]): Promise<Record<nu
     const aqiData = Array.isArray(aqiDataArray) ? aqiDataArray[index] : aqiDataArray;
     const waqiData = waqiResults[index];
     const astroData = astroResults[index];
+
+    const hourIndex = getCurrentHourIndex(weatherData.timezone, weatherData.hourly.time);
+    const hourlyPrecipProb = weatherData.hourly.precipitation_probability?.[hourIndex] || 0;
+    
+    // Use hourly values for better accuracy as requested
+    const rawHourlyCode = weatherData.hourly.weather_code[hourIndex];
+    const hourlyTemp = weatherData.hourly.temperature_2m[hourIndex];
+    
+    // Apply precipitation filter to the hour's weather
+    const filtered = getConditionWithFilter(rawHourlyCode, hourlyPrecipProb);
+    const finalCurrentCode = filtered ? filtered.code : rawHourlyCode;
+
+    // Use daily weather code for the main condition summary if possible
+    const todaySummaryCode = weatherData.daily.weather_code?.[0] ?? finalCurrentCode;
 
     if (!weatherData?.current) return;
 
@@ -466,16 +504,17 @@ export async function fetchWeatherBulk(locations: Location[]): Promise<Record<nu
     results[index] = {
       current: {
         time: weatherData.current.time,
-        temperature: weatherData.current.temperature_2m,
+        temperature: hourlyTemp ?? weatherData.current.temperature_2m,
         relativeHumidity: weatherData.current.relative_humidity_2m,
-        weatherCode: weatherData.current.weather_code,
+        weatherCode: finalCurrentCode,
+        summaryCode: todaySummaryCode, // Store daily code for summary
         windSpeed: weatherData.current.wind_speed_10m,
         windDirection: weatherData.current.wind_direction_10m,
         apparentTemperature: weatherData.current.apparent_temperature,
         isDay: weatherData.current.is_day === 1,
         visibility: weatherData.current.visibility,
         surfacePressure: weatherData.current.surface_pressure,
-        precipitation: weatherData.current.precipitation,
+        precipitation: hourlyPrecipProb,
       },
       hourly: {
         time: weatherData.hourly.time,
@@ -483,6 +522,8 @@ export async function fetchWeatherBulk(locations: Location[]): Promise<Record<nu
         weatherCode: weatherData.hourly.weather_code || weatherData.hourly.weathercode || [],
         precipitationProbability: weatherData.hourly.precipitation_probability || weatherData.hourly.precipitation_probability_max || [],
         windDirection: weatherData.hourly.wind_direction_10m || weatherData.hourly.winddirection_10m || [],
+        windSpeed: weatherData.hourly.wind_speed_10m || [],
+        snowfall: weatherData.hourly.snowfall || [],
       },
       daily: {
         time: weatherData.daily.time,
@@ -501,6 +542,9 @@ export async function fetchWeatherBulk(locations: Location[]): Promise<Record<nu
         color: aqiInfo.color,
         recommendation: aqiInfo.recommendation,
         lastUpdated: waqiLastUpdated,
+        freshnessLabel: waqiData?.freshnessLabel,
+        isStale: waqiData?.isStale,
+        isUnavailable: waqiData?.isUnavailable,
         pm10: pm10 ?? 0,
         pm2_5: pm2_5 ?? 0,
         no2: no2 ?? 0,
@@ -527,7 +571,7 @@ export async function fetchWeather(lat: number, lon: number, timezone: string, c
   const weatherParams = new URLSearchParams({
     latitude: safeLat.toString(),
     longitude: safeLon.toString(),
-    hourly: 'temperature_2m,weather_code,precipitation_probability,wind_direction_10m',
+    hourly: 'temperature_2m,weather_code,precipitation_probability,wind_direction_10m,snowfall,wind_speed_10m',
     daily: 'weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,uv_index_max,precipitation_sum',
     current: 'temperature_2m,relative_humidity_2m,apparent_temperature,is_day,weather_code,wind_speed_10m,wind_direction_10m,visibility,surface_pressure,precipitation',
     timezone: timezone || 'auto',
@@ -665,19 +709,34 @@ export async function fetchWeather(lat: number, lon: number, timezone: string, c
     throw new Error('Invalid weather data structure received');
   }
 
+  const hourIndex = getCurrentHourIndex(weatherData.timezone, weatherData.hourly.time);
+  const hourlyPrecipProb = weatherData.hourly.precipitation_probability?.[hourIndex] || 0;
+  
+  // Use hourly values for better accuracy as requested
+  const rawHourlyCode = weatherData.hourly.weather_code[hourIndex];
+  const hourlyTemp = weatherData.hourly.temperature_2m[hourIndex];
+  
+  // Apply precipitation filter to the hour's weather
+  const filtered = getConditionWithFilter(rawHourlyCode, hourlyPrecipProb);
+  const finalCurrentCode = filtered ? filtered.code : rawHourlyCode;
+
+  // Use daily weather code for the main condition summary if possible
+  const todaySummaryCode = weatherData.daily.weather_code?.[0] ?? finalCurrentCode;
+
   return {
     current: {
       time: weatherData.current.time,
-      temperature: weatherData.current.temperature_2m,
+      temperature: hourlyTemp ?? weatherData.current.temperature_2m,
       relativeHumidity: weatherData.current.relative_humidity_2m,
-      weatherCode: weatherData.current.weather_code,
+      weatherCode: finalCurrentCode,
+      summaryCode: todaySummaryCode,
       windSpeed: weatherData.current.wind_speed_10m,
       windDirection: weatherData.current.wind_direction_10m,
       apparentTemperature: weatherData.current.apparent_temperature,
       isDay: weatherData.current.is_day === 1,
       visibility: weatherData.current.visibility,
       surfacePressure: weatherData.current.surface_pressure,
-      precipitation: weatherData.current.precipitation,
+      precipitation: hourlyPrecipProb,
     },
     hourly: {
       time: weatherData.hourly.time,
@@ -685,6 +744,8 @@ export async function fetchWeather(lat: number, lon: number, timezone: string, c
       weatherCode: weatherData.hourly.weather_code || weatherData.hourly.weathercode || [],
       precipitationProbability: weatherData.hourly.precipitation_probability || weatherData.hourly.precipitation_probability_max || [],
       windDirection: weatherData.hourly.wind_direction_10m || weatherData.hourly.winddirection_10m || [],
+      windSpeed: weatherData.hourly.wind_speed_10m || [],
+      snowfall: weatherData.hourly.snowfall || [],
     },
     daily: {
       time: weatherData.daily.time,
@@ -703,6 +764,9 @@ export async function fetchWeather(lat: number, lon: number, timezone: string, c
       color: aqiInfo.color,
       recommendation: aqiInfo.recommendation,
       lastUpdated: waqiLastUpdated,
+      freshnessLabel: waqiData?.freshnessLabel,
+      isStale: waqiData?.isStale,
+      isUnavailable: waqiData?.isUnavailable,
       pm10: pm10 ?? 0,
       pm2_5: pm2_5 ?? 0,
       no2: no2 ?? 0,
@@ -714,36 +778,113 @@ export async function fetchWeather(lat: number, lon: number, timezone: string, c
   };
 }
 
+// Helper to get the correct hour index based on location's local time
+export const getCurrentHourIndex = (timezone: string, hourlyTimes?: string[]) => {
+  try {
+    const now = new Date();
+    // Get the current local time in the specified timezone
+    const localTimeStr = now.toLocaleString("en-US", { timeZone: timezone });
+    const localNow = new Date(localTimeStr);
+    const currentHour = localNow.getHours();
+    
+    if (hourlyTimes && hourlyTimes.length > 0) {
+      // Find matching index in hourly time array
+      // Open-Meteo returns times like "2024-05-17T13:00"
+      const index = hourlyTimes.findIndex(t => {
+        // We match by local date and hour
+        const hourStr = t.split('T')[1].split(':')[0];
+        const dateStr = t.split('T')[0];
+        
+        // Simple string comparison for efficiency
+        const targetDate = `${localNow.getFullYear()}-${String(localNow.getMonth() + 1).padStart(2, '0')}-${String(localNow.getDate()).padStart(2, '0')}`;
+        return dateStr === targetDate && parseInt(hourStr) === currentHour;
+      });
+      
+      if (index !== -1) {
+        console.log(`[WeatherService] matched hour index ${index} for ${currentHour}:00 in ${timezone}`);
+        return index;
+      }
+    }
+    
+    return currentHour; // Fallback to 0-23 (assumes array starts at 00:00)
+  } catch (e) {
+    console.warn('Failed to calculate local hour index:', e);
+    return new Date().getHours();
+  }
+};
+
+/**
+ * Robust WMO Code Mapping with Precipitation Filter
+ * Downgrades severe conditions if the specific precipitation probability for that hour is too low.
+ */
+export const getConditionWithFilter = (wmoCode: number, precipProb: number) => {
+  // If model says storm but probability is low, downgrade to overcast/cloudy
+  if (wmoCode >= 95 && precipProb < 40) {
+    return { code: 3, label: "Overcast" };
+  }
+  // Showers / Heavy Rain but low probability
+  if (wmoCode >= 80 && precipProb < 35) {
+    return { code: 2, label: "Partly Cloudy" };
+  }
+  // Rain but low probability
+  if (wmoCode >= 61 && precipProb < 30) {
+    return { code: 2, label: "Partly Cloudy" };
+  }
+  
+  return null; // No filtering needed
+};
+
+/**
+ * Hourly icon logic based strictly on precipitation probability thresholds.
+ * 0–14%    | Sun/Moon
+ * 15–29%   | CloudSun/Cloud
+ * 30–49%   | CloudDrizzle
+ * 50–69%   | CloudRain
+ * 70–100%  | CloudLightning
+ */
+export const getHourlyIcon = (precipProb: number, isNight: boolean) => {
+  if (precipProb >= 70) return { label: 'Heavy Storm', icon: 'CloudLightning' };
+  if (precipProb >= 50) return { label: 'Rain', icon: 'CloudRain' };
+  if (precipProb >= 30) return { label: 'Light Rain', icon: 'CloudDrizzle' };
+  if (precipProb >= 15) return { 
+    label: 'Partly Cloudy', 
+    icon: isNight ? 'Cloud' : 'CloudSun' 
+  };
+  return { 
+    label: isNight ? 'Clear' : 'Clear Sky', 
+    icon: isNight ? 'Moon' : 'Sun' 
+  };
+};
+
+/**
+ * Only show % if it is >= 20
+ */
+export const shouldShowPrecip = (precipProb: number) => {
+  return precipProb >= 20;
+};
+
 // Weather code to description and icon mapping
 export function getWeatherInfo(code: number, isDay: boolean = true) {
-  const mapping: Record<number, { label: string; icon: string }> = {
-    0: { label: 'Clear Sky', icon: isDay ? 'Sun' : 'Moon' },
-    1: { label: 'Mainly Clear', icon: isDay ? 'Sun' : 'Moon' },
-    2: { label: 'Partly Cloudy', icon: isDay ? 'CloudSun' : 'CloudMoon' },
-    3: { label: 'Overcast', icon: 'Cloud' },
-    45: { label: 'Foggy', icon: 'CloudFog' },
-    48: { label: 'Rime Fog', icon: 'CloudFog' },
-    51: { label: 'Light Drizzle', icon: 'CloudDrizzle' },
-    53: { label: 'Moderate Drizzle', icon: 'CloudDrizzle' },
-    55: { label: 'Dense Drizzle', icon: 'CloudDrizzle' },
-    61: { label: 'Slight Rain', icon: isDay ? 'CloudSunRain' : 'CloudMoonRain' },
-    63: { label: 'Moderate Rain', icon: 'CloudRain' },
-    65: { label: 'Heavy Rain', icon: 'CloudRainWind' },
-    66: { label: 'Light Freezing Rain', icon: 'CloudSnow' },
-    67: { label: 'Heavy Freezing Rain', icon: 'CloudSnow' },
-    71: { label: 'Slight Snow', icon: 'Snowflake' },
-    73: { label: 'Moderate Snow', icon: 'CloudSnow' },
-    75: { label: 'Heavy Snow', icon: 'CloudSnow' },
-    77: { label: 'Snow Grains', icon: 'Snowflake' },
-    80: { label: 'Slight Rain Showers', icon: isDay ? 'CloudSunRain' : 'CloudMoonRain' },
-    81: { label: 'Moderate Rain Showers', icon: 'CloudRain' },
-    82: { label: 'Violent Rain Showers', icon: 'CloudRainWind' },
-    85: { label: 'Slight Snow Showers', icon: 'CloudSnow' },
-    86: { label: 'Heavy Snow Showers', icon: 'CloudSnow' },
-    95: { label: 'Thunderstorm', icon: 'CloudLightning' },
-    96: { label: 'Thunderstorm with Hail', icon: 'CloudLightning' },
-    99: { label: 'Thunderstorm with Heavy Hail', icon: 'CloudLightning' },
+  // Mapping logic as requested by user for consistency
+  const getMapped = (c: number) => {
+    // Rain/snow/storm icons — strictly by code
+    if (c >= 96) return { label: 'Severe Storm', icon: 'Zap' };
+    if (c === 95) return { label: 'Thunderstorm', icon: 'CloudLightning' };
+    if (c >= 85) return { label: 'Snow Showers', icon: 'CloudSnow' };
+    if (c >= 80) return { label: 'Rain Showers', icon: 'CloudRainWind' };
+    if (c >= 71) return { label: 'Snow', icon: 'Snowflake' };
+    if (c >= 61) return { label: 'Rain', icon: 'CloudRain' };
+    if (c >= 51) return { label: 'Drizzle', icon: 'CloudDrizzle' };
+    if (c >= 45) return { label: 'Foggy', icon: 'CloudFog' };
+
+    // Clear/cloudy icons — use isDay for correct icon
+    if (c === 3) return { label: 'Overcast', icon: 'Cloud' };
+    if (c === 2) return { label: 'Partly Cloudy', icon: isDay ? 'CloudSun' : 'Cloud' };
+    if (c === 1) return { label: 'Mainly Clear', icon: isDay ? 'Sun' : 'Moon' };
+    if (c === 0) return { label: 'Clear Sky', icon: isDay ? 'Sun' : 'Moon' };
+
+    return { label: 'Unknown', icon: 'Cloud' };
   };
 
-  return mapping[code] || { label: 'Unknown', icon: 'Cloud' };
+  return getMapped(code);
 }

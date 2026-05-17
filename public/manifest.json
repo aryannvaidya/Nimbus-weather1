@@ -1,11 +1,11 @@
 {
-  "name": "Nimbus Black",
+  "name": "Nimbus Weather",
   "short_name": "Nimbus",
   "description": "Ultra-minimal, AMOLED-black weather experience.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#000000",
-  "theme_color": "#000000",
+  "theme_color": "#00000000",
   "orientation": "portrait",
   "icons": [
     {
