@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { RawIcons } from './WeatherIcons';
-import { cn, GLASS_STYLE_SUBTLE } from '../lib/utils';
+import { cn } from '../lib/utils';
+import { Haptic } from '../lib/haptics';
 
 interface WeatherAlert {
   id: string;
@@ -13,120 +14,124 @@ interface WeatherAlert {
 interface AlertsDisplayProps {
   alerts: WeatherAlert[];
   onDismiss: (id: string) => void;
+  hapticEnabled?: boolean;
 }
 
-export default function AlertsDisplay({ alerts, onDismiss }: AlertsDisplayProps) {
+const CARD_HEIGHT = 72;
+const PEEK = 10;
+const SCALE_STEP = 0.04;
+
+export default function AlertsDisplay({ alerts, onDismiss, hapticEnabled = true }: AlertsDisplayProps) {
   const [isExpanded, setIsExpanded] = useState(false);
 
   if (alerts.length === 0) return null;
 
-  const handleToggle = (e: React.MouseEvent) => {
-    // Don't toggle if clicking the dismiss button
-    if ((e.target as HTMLElement).closest('button')) return;
-    if (alerts.length > 1) {
-      setIsExpanded(!isExpanded);
+  const toggleStack = () => {
+    setIsExpanded(!isExpanded);
+    Haptic.light(hapticEnabled);
+  };
+
+  const getAlertIcon = (type: string) => {
+    switch (type) {
+      case 'rain': return "🌧️";
+      case 'snow': return "❄️";
+      case 'storm': return "🌩️";
+      case 'severe': return "⚠️";
+      case 'severe_storm': return "🌪️";
+      default: return "⚠️";
     }
   };
 
   return (
-    <div 
-      className={cn(
-        "w-full px-6 mb-8 mt-2 transition-all duration-500 ease-in-out cursor-pointer",
-        isExpanded ? "space-y-3" : "relative"
-      )}
-      onClick={handleToggle}
-      style={{ minHeight: isExpanded ? 'auto' : '84px' }}
-    >
-      <AnimatePresence mode="popLayout">
-        {alerts.map((alert, index) => {
-          const isStacked = !isExpanded && alerts.length > 1;
-          const stackIndex = index;
-          
-          return (
-            <motion.div
-              key={alert.id}
-              layout
-              initial={{ opacity: 0, y: -20, scale: 0.9 }}
-              animate={isExpanded ? {
-                opacity: 1,
-                y: 0,
-                scale: 1,
-                zIndex: alerts.length - index,
-                rotate: 0,
-                filter: 'blur(0px)',
-              } : {
-                opacity: stackIndex > 2 ? 0 : 1,
-                y: stackIndex * 12, // More pronounced sliver
-                scale: 1 - (stackIndex * 0.05),
-                zIndex: alerts.length - stackIndex,
-                filter: stackIndex > 0 ? `blur(${stackIndex * 1}px)` : 'blur(0px)',
-                position: isStacked && stackIndex > 0 ? 'absolute' : 'relative',
-                top: 0,
-                left: 0,
-                right: 0,
-              }}
-              style={{ transformOrigin: 'top center' }}
-              exit={{ opacity: 0, scale: 0.9, y: 10 }}
-              transition={{
-                type: "spring",
-                stiffness: 300,
-                damping: 30,
-                mass: 1
-              }}
-              className={cn(
-                "p-4 rounded-[24px] flex gap-4 items-start relative overflow-hidden group transition-all",
-                GLASS_STYLE_SUBTLE,
-                "bg-app-text/[0.05] border-app-border backdrop-blur-xl",
-                !isExpanded && index > 0 && "pointer-events-none"
-              )}
-            >
-              {/* Glow background */}
-              <div className="absolute inset-0 bg-gradient-to-br from-app-text/[0.03] to-transparent pointer-events-none" />
-              
-              <div className="mt-1 flex-shrink-0">
-                {alert.type === 'rain' && <RawIcons.CloudRain className="w-5 h-5 text-blue-500" />}
-                {alert.type === 'snow' && <RawIcons.Snowflake className="w-5 h-5 text-app-text" />}
-                {alert.type === 'storm' && <RawIcons.CloudLightning className="w-5 h-5 text-amber-500" />}
-                {alert.type === 'severe' && <RawIcons.ShieldAlert className="w-5 h-5 text-rose-500" />}
-                {alert.type === 'severe_storm' && <RawIcons.Zap className="w-5 h-5 text-rose-600 animate-pulse" />}
-              </div>
-
-              <div className="flex-1 min-w-0">
-                <h4 className={cn(
-                  "text-[14px] font-bold mb-0.5 tracking-tight uppercase",
-                  alert.type === 'severe_storm' ? "text-rose-500" : "text-app-text"
-                )}>
-                  {alert.title}
-                </h4>
-                <p className="text-[13px] text-app-text-dim leading-tight">
-                  {alert.message}
-                </p>
-              </div>
-
-              <button 
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onDismiss(alert.id);
+    <div className="relative w-full px-6 mb-8 mt-2 select-none">
+      <motion.div 
+        layout
+        className={cn(
+          "warnings-stack",
+          !isExpanded ? "collapsed" : "expanded"
+        )}
+        data-count={alerts.length}
+        style={{ 
+          height: isExpanded 
+            ? (alerts.length * (CARD_HEIGHT + 10)) 
+            : (CARD_HEIGHT + ((alerts.length - 1) * PEEK)) 
+        }}
+        onClick={() => {
+          if (!isExpanded && alerts.length > 1) {
+            toggleStack();
+          }
+        }}
+      >
+        <AnimatePresence mode="popLayout">
+          {alerts.map((alert, index) => {
+            const offset = index * PEEK;
+            const scale = 1 - (index * SCALE_STEP);
+            const opacity = isExpanded ? 1 : (index > 2 ? 0 : 1 - (index * 0.15));
+            
+            return (
+              <motion.div
+                key={alert.id}
+                layout
+                initial={{ opacity: 0, x: 50, scale: 0.8 }}
+                animate={{
+                  opacity,
+                  scale: isExpanded ? 1 : scale,
+                  y: isExpanded ? index * (CARD_HEIGHT + 10) : offset,
+                  zIndex: alerts.length - index,
                 }}
-                className="p-1 opacity-40 hover:opacity-100 transition-opacity flex-shrink-0"
+                exit={{ 
+                  opacity: 0, 
+                  x: 100,
+                  transition: { duration: 0.3 }
+                }}
+                transition={{
+                  type: "spring",
+                  stiffness: 400,
+                  damping: 35,
+                  mass: 0.8
+                }}
+                className={cn(
+                  "warning-card",
+                  !isExpanded && index > 1 && "pointer-events-none"
+                )}
+                onClick={(e) => {
+                  if (isExpanded) {
+                    toggleStack();
+                  }
+                }}
               >
-                <RawIcons.X className="w-4 h-4 text-app-text" />
-              </button>
-            </motion.div>
-          );
-        })}
-      </AnimatePresence>
-      
-      {/* Stack indicator hint for iOS feel */}
-      {!isExpanded && alerts.length > 1 && (
-        <motion.div 
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          className="absolute -bottom-4 left-0 right-0 flex justify-center pointer-events-none"
-        >
-          <div className="w-8 h-1 rounded-full bg-app-text/10" />
-        </motion.div>
-      )}
+                <div className="warning-inner">
+                  <span className="warning-icon">
+                    {getAlertIcon(alert.type)}
+                  </span>
+                  <div className="warning-text">
+                    <div className="warning-title">
+                      {alert.title}
+                    </div>
+                    <div className="warning-msg">
+                      {alert.message}
+                    </div>
+                  </div>
+                  <button 
+                    className="warning-close"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDismiss(alert.id);
+                      Haptic.light(hapticEnabled);
+                      if (isExpanded && alerts.length <= 2) {
+                        setIsExpanded(false);
+                      }
+                    }}
+                  >
+                    <RawIcons.X className="w-4 h-4" />
+                  </button>
+                </div>
+              </motion.div>
+            );
+          })}
+        </AnimatePresence>
+      </motion.div>
     </div>
   );
 }
+

@@ -1,6 +1,114 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;500;600&display=swap');
 @import "tailwindcss";
 
+/* 1. GLOBAL ANTI-SCROLLBAR RULES - APPLIED FIRST */
+*,
+*::before,
+*::after {
+  /* Firefox */
+  scrollbar-width: none !important;
+  
+  /* IE and Edge */
+  -ms-overflow-style: none !important;
+}
+
+/* Chrome, Safari, Brave, WebView */
+*::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+  background: transparent !important;
+}
+
+*::-webkit-scrollbar-track {
+  display: none !important;
+  background: transparent !important;
+}
+
+*::-webkit-scrollbar-thumb {
+  display: none !important;
+  background: transparent !important;
+}
+
+*::-webkit-scrollbar-corner {
+  display: none !important;
+  background: transparent !important;
+}
+
+/* Main app container */
+html {
+  scrollbar-width: none !important;
+  -ms-overflow-style: none !important;
+  overflow: -moz-scrollbars-none !important;
+}
+
+html::-webkit-scrollbar { 
+  display: none !important; 
+  width: 0 !important;
+}
+
+body {
+  scrollbar-width: none !important;
+  -ms-overflow-style: none !important;
+  overflow-x: hidden !important;
+}
+
+body::-webkit-scrollbar { 
+  display: none !important;
+  width: 0 !important;
+}
+
+/* Hourly forecast horizontal scroll */
+.hourly-forecast,
+.hourly-container,
+.hourly-scroll,
+[class*="hourly"] {
+  scrollbar-width: none !important;
+  -ms-overflow-style: none !important;
+  overflow-x: auto !important;
+  overflow-y: hidden !important;
+  -webkit-overflow-scrolling: touch !important;
+}
+
+.hourly-forecast::-webkit-scrollbar,
+.hourly-container::-webkit-scrollbar,
+.hourly-scroll::-webkit-scrollbar,
+[class*="hourly"]::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+
+/* All scrollable panels */
+.city-card,
+.settings-panel,
+.about-page,
+.map-page,
+.add-city-panel,
+[class*="panel"],
+[class*="card"],
+[class*="container"],
+[class*="scroll"],
+[class*="page"] {
+  scrollbar-width: none !important;
+  -ms-overflow-style: none !important;
+}
+
+.city-card::-webkit-scrollbar,
+.settings-panel::-webkit-scrollbar,
+.about-page::-webkit-scrollbar,
+.map-page::-webkit-scrollbar,
+.add-city-panel::-webkit-scrollbar,
+[class*="panel"]::-webkit-scrollbar,
+[class*="card"]::-webkit-scrollbar,
+[class*="container"]::-webkit-scrollbar,
+[class*="scroll"]::-webkit-scrollbar,
+[class*="page"]::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+
 @theme {
   --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --color-app-bg: var(--bg-primary);
@@ -32,28 +140,6 @@
   -webkit-tap-highlight-color: transparent;
   -webkit-touch-callout: none;
   user-select: none;
-  /* Hide scrollbar on all elements */
-  scrollbar-width: none;        /* Firefox */
-  -ms-overflow-style: none;     /* IE/Edge */
-}
-
-*::-webkit-scrollbar {
-  display: none;                /* Chrome, Safari, Brave */
-  width: 0;
-  height: 0;
-}
-
-/* Make sure scroll still works, just hidden */
-.city-card,
-.settings-panel,
-.about-page,
-.hourly-forecast-container,
-.scroll-container,
-body {
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
-  scrollbar-width: none;
-  -ms-overflow-style: none;
 }
 
 input, textarea, [contenteditable="true"] {
@@ -185,5 +271,87 @@ input[type=range]::-webkit-slider-runnable-track {
 
 input[type=range]:active::-webkit-slider-thumb {
   transform: scale(1.15);
+}
+
+/* iOS Stacked Warning Cards */
+.warnings-stack {
+  position: relative;
+  width: 100%;
+  margin: 12px 0;
+  cursor: pointer;
+  perspective: 1000px;
+}
+
+.warning-card {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  /* Fixed height as requested */
+  height: 72px; 
+  transform-origin: top center;
+  will-change: transform, opacity;
+  box-shadow: 0 4px 15px rgba(0,0,0,0.4);
+}
+
+.warning-inner {
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  height: 100%;
+  gap: 12px;
+  background: #1e293b;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(20px);
+}
+
+.warning-icon {
+  font-size: 24px;
+  flex-shrink: 0;
+}
+
+.warning-text {
+  flex: 1;
+  overflow: hidden;
+}
+
+.warning-title {
+  font-size: 11px;
+  font-weight: 800;
+  color: #94a3b8;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.warning-msg {
+  font-size: 14px;
+  color: #f8fafc;
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 500;
+}
+
+.warning-close {
+  background: rgba(255, 255, 255, 0.1);
+  border: none;
+  color: #94a3b8;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  font-size: 16px;
+  cursor: pointer;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+.warning-close:active {
+  transform: scale(0.9);
+  background: rgba(255, 255, 255, 0.2);
 }
 
