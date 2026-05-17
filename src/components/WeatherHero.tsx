@@ -2,6 +2,7 @@ import React from 'react';
 import { WeatherData, Location, Settings } from '../types';
 import { WeatherIcon, Icons } from './WeatherIcons';
 import { getWeatherInfo, getMoonPhaseInfo } from '../services/weatherService';
+import { formatTemp } from '../lib/units';
 import { motion } from 'motion/react';
 import { format, parseISO } from 'date-fns';
 import { RawIcons } from './WeatherIcons';
@@ -19,11 +20,6 @@ interface WeatherHeroProps {
 export default function WeatherHero({ weather, location, settings, onRefresh, isRefreshing }: WeatherHeroProps) {
   const info = getWeatherInfo(weather.current.weatherCode, weather.current.isDay);
   const moonPhase = getMoonPhaseInfo(weather.daily.moonPhase?.[0] ?? 0);
-
-  const convert = (temp: number) => {
-    if (settings.unitTemp === 'F') return Math.round((temp * 1.8) + 32);
-    return Math.round(temp);
-  };
 
   const formatDate = (dateStr: string) => {
     try {
@@ -49,7 +45,7 @@ export default function WeatherHero({ weather, location, settings, onRefresh, is
   };
 
   return (
-    <div className="flex flex-col items-center text-center py-6">
+    <div className="flex flex-col items-center text-center py-6 gpu will-change-transform">
       {/* Status Bar - Moon Phase & Last Updated */}
       <div className="flex items-center gap-2 mb-4">
         <motion.div 
@@ -116,16 +112,16 @@ export default function WeatherHero({ weather, location, settings, onRefresh, is
       >
         <div className="flex justify-center -mr-6">
           <span className="text-[140px] leading-none font-[200] tracking-tighter text-app-text">
-            {convert(weather.current.temperature)}
+            {formatTemp(weather.current.temperature, settings.unitTemp)}
           </span>
           <span className="text-3xl font-light text-app-text-dim mt-6 ml-2">°</span>
         </div>
         <div className="flex flex-col items-center gap-2 mt-4">
           <span className="text-xl font-medium text-app-text/90">{info.label}</span>
           <div className="flex items-center gap-3 text-app-text-dim text-[14px] font-medium tracking-wide">
-            <span>H: {convert(weather.daily.temperatureMax?.[0] ?? 0)}°</span>
+            <span>H: {formatTemp(weather.daily.temperatureMax?.[0] ?? 0, settings.unitTemp)}°</span>
             <span className="w-1 h-1 bg-app-border rounded-full" />
-            <span>L: {convert(weather.daily.temperatureMin?.[0] ?? 0)}°</span>
+            <span>L: {formatTemp(weather.daily.temperatureMin?.[0] ?? 0, settings.unitTemp)}°</span>
           </div>
         </div>
       </motion.div>

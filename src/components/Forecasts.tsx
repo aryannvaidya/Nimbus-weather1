@@ -2,6 +2,7 @@ import React from 'react';
 import { WeatherData, Settings } from '../types';
 import { WeatherIcon } from './WeatherIcons';
 import { getWeatherInfo } from '../services/weatherService';
+import { formatTemp } from '../lib/units';
 import { motion } from 'motion/react';
 import { format, parseISO } from 'date-fns';
 import { cn, GLASS_STYLE_SUBTLE } from '../lib/utils';
@@ -60,11 +61,6 @@ export function HourlyForecast({ weather, settings }: ForecastProps) {
     })
     .slice(0, 24);
 
-  const convert = (temp: number) => {
-    if (settings.unitTemp === 'F') return Math.round((temp * 1.8) + 32);
-    return Math.round(temp);
-  };
-
   return (
     <div className="relative -mx-6">
       <div className="flex items-center justify-between px-6 mb-3">
@@ -119,7 +115,7 @@ export function HourlyForecast({ weather, settings }: ForecastProps) {
                 "text-[16px] font-light",
                 isNow ? "font-medium text-app-text" : "text-app-text"
               )}>
-                {convert(item.temp)}°
+                {formatTemp(item.temp, settings.unitTemp)}°
               </span>
             </motion.div>
           );
@@ -134,18 +130,13 @@ export function HourlyForecast({ weather, settings }: ForecastProps) {
 }
 
 export function DailyForecast({ weather, settings }: ForecastProps) {
-  const convert = (temp: number) => {
-    if (settings.unitTemp === 'F') return Math.round((temp * 1.8) + 32);
-    return Math.round(temp);
-  };
-
   return (
     <div className="w-full">
       <div className="flex items-center justify-between px-2 mb-3">
         <span className="text-[11px] font-bold tracking-[0.08em] uppercase text-app-text-dim">7-Day Forecast</span>
         <Icons.ChevronRight className="w-4 h-4 text-app-text-dim/50" />
       </div>
-      <div className={cn("flex flex-col gap-1 p-2 gpu", "bg-app-surface backdrop-blur-2xl border border-app-border rounded-[32px]")}>
+      <div className={cn("flex flex-col gap-1 p-2 gpu will-change-transform", "bg-app-surface backdrop-blur-xl border border-app-border rounded-[32px]")}>
         {(weather?.daily?.time || []).map((time, i) => {
           const info = getWeatherInfo(weather.daily.weatherCode?.[i] ?? 0);
           const date = parseISO(time);
@@ -164,8 +155,8 @@ export function DailyForecast({ weather, settings }: ForecastProps) {
                 <span className="text-[13px] text-app-text-dim hidden sm:inline-block truncate max-w-[100px]">{info.label}</span>
               </div>
               <div className="flex items-center gap-4 w-24 justify-end">
-                <span className="text-[15px] font-semibold text-app-text">{convert(weather.daily.temperatureMax?.[i] ?? 0)}°</span>
-                <span className="text-[15px] font-medium text-app-text-dim">{convert(weather.daily.temperatureMin?.[i] ?? 0)}°</span>
+                <span className="text-[15px] font-semibold text-app-text">{formatTemp(weather.daily.temperatureMax?.[i] ?? 0, settings.unitTemp)}°</span>
+                <span className="text-[15px] font-medium text-app-text-dim">{formatTemp(weather.daily.temperatureMin?.[i] ?? 0, settings.unitTemp)}°</span>
               </div>
             </div>
           );

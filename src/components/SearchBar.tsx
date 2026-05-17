@@ -130,9 +130,54 @@ export default function SearchBar({ onSelect, onClose, hapticEnabled }: SearchBa
               <p className="text-[15px] text-app-text">No results found for "{query}"</p>
             </div>
           ) : (
-            <div className="py-20 text-center opacity-20">
-              <Icons.MapPin className="w-16 h-16 mx-auto mb-6 opacity-10" />
-              <p className="text-[11px] font-bold tracking-[0.2em] uppercase text-app-text">Global Database</p>
+            <div className="flex flex-col gap-6">
+              <div className="flex flex-col gap-2">
+                <h3 className="text-[11px] font-semibold text-app-text-dim/40 uppercase tracking-[0.1em] px-2 mb-2">Nearby</h3>
+                <button 
+                  onClick={() => {
+                    Haptic.medium(hapticEnabled);
+                    if (navigator.geolocation) {
+                      setIsLoading(true);
+                      navigator.geolocation.getCurrentPosition(
+                        (pos) => {
+                          const curLoc: Location = {
+                            id: 0,
+                            name: "Current Location",
+                            latitude: pos.coords.latitude,
+                            longitude: pos.coords.longitude,
+                            country: "Nearby",
+                            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+                          };
+                          Haptic.success(hapticEnabled);
+                          onSelect(curLoc);
+                          setIsLoading(false);
+                        },
+                        (err) => {
+                          console.warn("Geolocation denied in search:", err);
+                          setIsLoading(false);
+                          // Maybe show a toast or message
+                        },
+                        { timeout: 8000 }
+                      );
+                    }
+                  }}
+                  className="w-full flex items-center gap-4 p-4 text-left active:bg-app-text/5 bg-app-surface border border-app-border rounded-2xl transition-all"
+                >
+                  <div className="p-3 bg-app-text/5 rounded-xl">
+                    <Icons.Navigation className="w-5 h-5 text-blue-500" />
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="text-[16px] font-medium text-app-text">Current Location</span>
+                    <span className="text-[13px] text-app-text-dim/60">Use your device's GPS</span>
+                  </div>
+                  <Icons.ChevronRight className="w-5 h-5 text-app-text-dim/20 ml-auto" />
+                </button>
+              </div>
+
+              <div className="py-10 text-center opacity-20">
+                <Icons.MapPin className="w-16 h-16 mx-auto mb-6 opacity-10" />
+                <p className="text-[11px] font-bold tracking-[0.2em] uppercase text-app-text">Global Database</p>
+              </div>
             </div>
           )}
         </div>

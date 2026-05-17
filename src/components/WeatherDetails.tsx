@@ -2,6 +2,7 @@ import React from 'react';
 import { WeatherData, Settings } from '../types';
 import { RawIcons, WeatherIcon } from './WeatherIcons';
 import { cn, GLASS_STYLE_SUBTLE } from '../lib/utils';
+import { formatTemp, formatWind, formatVisibility, formatPrecipitation } from '../lib/units';
 import { format, parseISO } from 'date-fns';
 import { motion } from 'motion/react';
 
@@ -13,38 +14,6 @@ interface WeatherDetailsProps {
 export default function WeatherDetails({ weather, settings }: WeatherDetailsProps) {
   const aqi = weather.airQuality;
   
-  const convertTemp = (temp: number) => {
-    if (settings.unitTemp === 'F') return Math.round((temp * 1.8) + 32);
-    return Math.round(temp);
-  };
-
-  const convertWindValue = (speed: number) => {
-    switch (settings.unitWind) {
-      case 'mph': return Math.round(speed * 2.23694);
-      case 'm/s': return speed.toFixed(1);
-      default: return Math.round(speed * 3.6);
-    }
-  };
-
-  const getWindUnit = () => {
-    switch (settings.unitWind) {
-      case 'mph': return 'mph';
-      case 'm/s': return 'm/s';
-      default: return 'km/h';
-    }
-  };
-
-  const convertVisibility = (vis: number) => {
-    const km = vis / 1000;
-    if (settings.unitVisibility === 'miles') return (km * 0.621371).toFixed(1);
-    return km.toFixed(1);
-  };
-
-  const convertPrecipitation = (val: number) => {
-    if (settings.unitPrecipitation === 'inches') return (val * 0.0393701).toFixed(2);
-    return val.toFixed(1);
-  };
-
   const getCurrentIndex = () => {
     // Current time in the city's timezone
     const baseCityTime = parseISO(weather.current.time.includes('Z') ? weather.current.time : `${weather.current.time}:00Z`);
@@ -72,13 +41,13 @@ export default function WeatherDetails({ weather, settings }: WeatherDetailsProp
     },
     {
       label: 'Visibility',
-      value: convertVisibility(weather.current.visibility || 0),
+      value: formatVisibility(weather.current.visibility || 0, settings.unitVisibility),
       unit: settings.unitVisibility === 'miles' ? 'mi' : 'km',
       icon: 'Eye'
     },
     {
       label: 'Precipitation',
-      value: convertPrecipitation(weather?.daily?.precipitationSum?.[0] || 0),
+      value: formatPrecipitation(weather?.daily?.precipitationSum?.[0] || 0, settings.unitPrecipitation as any),
       unit: settings.unitPrecipitation === 'inches' ? 'in' : 'mm',
       icon: 'CloudRain',
       desc: `Today • Chance: ${rainChance}%`,
@@ -86,8 +55,8 @@ export default function WeatherDetails({ weather, settings }: WeatherDetailsProp
     },
     {
       label: 'Wind Speed',
-      value: convertWindValue(weather.current.windSpeed || 0),
-      unit: getWindUnit(),
+      value: formatWind(weather.current.windSpeed || 0, settings.unitWind),
+      unit: settings.unitWind,
       icon: 'Wind',
       desc: getWindDir(weather.current.windDirection || 0),
       isWind: true
@@ -97,7 +66,7 @@ export default function WeatherDetails({ weather, settings }: WeatherDetailsProp
   return (
     <div className="flex flex-col gap-6 px-0">
       {/* 1. Robust AQI Card (Full Width) */}
-      <div className="w-full bg-app-surface backdrop-blur-[32px] border border-app-border rounded-[32px] pt-5 pb-6 px-6 flex flex-col gap-5 overflow-hidden shadow-2xl relative">
+      <div className="w-full bg-app-surface backdrop-blur-xl border border-app-border rounded-[32px] pt-5 pb-6 px-6 flex flex-col gap-5 overflow-hidden shadow-2xl relative gpu will-change-transform">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-full bg-app-text/5 flex items-center justify-center">
@@ -183,7 +152,7 @@ export default function WeatherDetails({ weather, settings }: WeatherDetailsProp
           <div 
             key={i} 
             className={cn(
-              "px-4 py-6 flex flex-col justify-between bg-app-surface backdrop-blur-[32px] border border-app-border rounded-[28px] h-[140px] shadow-lg transition-all duration-300 hover:bg-app-text/[0.05]",
+              "px-4 py-6 flex flex-col justify-between bg-app-surface backdrop-blur-xl border border-app-border rounded-[28px] h-[140px] shadow-lg transition-all duration-300 hover:bg-app-text/[0.05] gpu will-change-transform",
               ('isWind' in detail) && "py-5"
             )}
           >

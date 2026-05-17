@@ -76,14 +76,6 @@ input, textarea, [contenteditable="true"] {
   -webkit-transform: translateZ(0);
   transform: translateZ(0);
   will-change: transform;
-  backface-visibility: hidden;
-  -webkit-backface-visibility: hidden;
-}
-
-/* Replace all CSS transitions over 300ms — reduce to 150ms */
-* {
-  transition-duration: 150ms !important;
-  transition-timing-function: ease-out !important;
 }
 
 /* Smooth scrolling and prevent bounce */
@@ -187,5 +179,26 @@ input[type=range]::-webkit-slider-runnable-track {
 
 input[type=range]:active::-webkit-slider-thumb {
   transform: scale(1.15);
+}
+
+/* UI OVERLAY - Elements that NEVER move during swiping */
+#ui-overlay {
+  z-index: 2000;
+  pointer-events: none;
+  will-change: transform;
+}
+
+#ui-overlay button, 
+#ui-overlay a {
+  pointer-events: auto;
+}
+
+/* SWIPE LAYER - The container that handles the visual slide */
+#swipe-layer {
+  /* No default transform here, let React/JS handle it */
+  will-change: transform, opacity;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  perspective: 1000px;
 }
 

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { formatTemp } from './lib/units';
 import { Location, WeatherData, WeatherState, Settings } from './types';
 import { fetchWeather, fetchWeatherBulk } from './services/weatherService';
 import { getCachedWeatherData, saveWeatherData, STORAGE_KEYS, getCityKey } from './lib/storage';
@@ -11,7 +12,7 @@ import { HourlyForecast, DailyForecast } from './components/Forecasts';
 import WeatherDetails from './components/WeatherDetails';
 import SunPath from './components/SunPath';
 import { Icons } from './components/WeatherIcons';
-import { motion, AnimatePresence, useMotionValue, useTransform, useSpring } from 'motion/react';
+import { motion, AnimatePresence, useMotionValue, useTransform, useSpring, useScroll, useMotionValueEvent } from 'motion/react';
 import { cn } from './lib/utils';
 import SettingsScreen from './components/SettingsScreen';
 import CityManager from './components/CityManager';
@@ -106,12 +107,16 @@ export default function App() {
 
   // Consolidated startup logic: Hydrate and background refresh
   useEffect(() => {
+    const isMounted = { current: true };
     const startup = async () => {
-      if (state.locations.length === 0) {
-        // Handle new user / first launch logic
+      const hasLocations = state.locations.length > 0;
+      const isFirstCurrent = hasLocations && state.locations[0].name === "Current Location";
+
+      if (!hasLocations || isFirstCurrent) {
         if (navigator.geolocation) {
           navigator.geolocation.getCurrentPosition(
             async (pos) => {
+              if (!isMounted.current) return;
               let timezone = 'UTC';
               try {
                 timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -127,25 +132,73 @@ export default function App() {
                 country: "Nearby",
                 timezone
               };
-              addLocation(myLocation);
+
+              if (!hasLocations) {
+                addLocation(myLocation);
+              } else {
+                // Update existing "Current Location"
+                setState(prev => {
+                  const newLocs = [...prev.locations];
+                  newLocs[0] = myLocation;
+                  return { 
+                    ...prev, 
+                    locations: newLocs,
+                    loading: true // Show loading while fetching fresh data for new coordinates
+                  };
+                });
+                
+                // Fetch fresh weather for the new coordinates
+                try {
+                  const data = await fetchWeather(myLocation.latitude, myLocation.longitude, myLocation.timezone);
+                  if (!isMounted.current) return;
+                  saveWeatherData(getCityKey(myLocation), data);
+                  setState(prev => ({
+                    ...prev,
+                    weatherData: { ...prev.weatherData, [0]: data },
+                    loading: false
+                  }));
+                } catch (err) {
+                  if (isMounted.current) {
+                    console.warn("Failed to fetch weather for updated current location:", err);
+                    setState(prev => ({ ...prev, loading: false }));
+                  }
+                }
+
+                // Also trigger batch load for rest if needed
+                if (state.locations.length > 1) {
+                   loadWeatherBatch(state.locations.slice(1), 1);
+                }
+              }
             },
-            () => {
-              addLocation(DEFAULT_LOCATION);
+            (err) => {
+              if (isMounted.current) {
+                console.warn("Geolocation failed or denied:", err.message);
+                if (!hasLocations) {
+                  addLocation(DEFAULT_LOCATION);
+                } else {
+                  loadWeatherBatch(state.locations);
+                }
+              }
             },
-            { timeout: 8000 }
+            { timeout: 10000, enableHighAccuracy: true }
           );
         } else {
-          addLocation(DEFAULT_LOCATION);
+          if (!hasLocations) {
+            addLocation(DEFAULT_LOCATION);
+          } else {
+            loadWeatherBatch(state.locations);
+          }
         }
       } else {
-        // Small delay for non-critical background refresh to allow UI to breathe
+        // Just standard load
         setTimeout(() => {
-          loadWeatherBatch(state.locations);
+          if (isMounted.current) loadWeatherBatch(state.locations);
         }, 800);
       }
     };
 
     startup();
+    return () => { isMounted.current = false; };
   }, []);
 
   const [dismissedAlerts, setDismissedAlerts] = useState<Record<string, number>>(() => {
@@ -167,8 +220,14 @@ export default function App() {
   const [headerVisible, setHeaderVisible] = useState(true);
   const [activeAlerts, setActiveAlerts] = useState<any[]>([]);
   
-  const mainRef = useRef<HTMLDivElement>(null);
-  const lastScrollY = useRef(0);
+  const { scrollY } = useScroll();
+  
+  useMotionValueEvent(scrollY, "change", (latest) => {
+    const next = latest < 40;
+    if (headerVisible !== next) {
+      setHeaderVisible(next);
+    }
+  });
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', state.settings.theme);
@@ -329,14 +388,14 @@ export default function App() {
     });
   };
 
-  const loadWeatherBatch = async (locations: Location[]) => {
+  const loadWeatherBatch = async (locations: Location[], startIndex = 0) => {
     if (locations.length === 0) return;
 
     // Load from cache first for immediate display (Persistent Offline Mode)
     const initialCachedData: Record<number, WeatherData> = {};
     locations.forEach((loc, idx) => {
       const cached = getCachedWeatherData(getCityKey(loc));
-      if (cached) initialCachedData[idx] = cached.data;
+      if (cached) initialCachedData[startIndex + idx] = cached.data;
     });
 
     if (Object.keys(initialCachedData).length > 0) {
@@ -357,9 +416,10 @@ export default function App() {
         const newWeatherData = { ...prev.weatherData };
         Object.entries(bulkData).forEach(([index, data]) => {
           const idx = parseInt(index);
-          newWeatherData[idx] = data;
+          const absoluteIdx = startIndex + idx;
+          newWeatherData[absoluteIdx] = data as WeatherData;
           // Save to persistent cache
-          saveWeatherData(getCityKey(locations[idx]), data);
+          saveWeatherData(getCityKey(locations[idx]), data as WeatherData);
         });
 
         return {
@@ -374,7 +434,7 @@ export default function App() {
       // If we are online but bulk fails, try staggered
       if (navigator.onLine) {
         for (let i = 0; i < locations.length; i++) {
-          await loadWeather(locations[i], i);
+          await loadWeather(locations[i], startIndex + i);
           if (i < locations.length - 1) {
             await new Promise(resolve => setTimeout(resolve, 500));
           }
@@ -502,7 +562,7 @@ export default function App() {
       const now = Date.now();
       const timeStr = format(now, 'HH:mm');
       if (timeStr === state.settings.notificationTime) {
-        const summary = `Today: ${Math.round(activeWeather.daily.temperatureMax[0])}°${state.settings.unitTemp}, ${activeWeather.airQuality?.description} Air.`;
+        const summary = `Today: ${formatTemp(activeWeather.daily.temperatureMax[0], state.settings.unitTemp)}°${state.settings.unitTemp}, ${activeWeather.airQuality?.description} Air.`;
         sendNotification("Nimbus Weather", summary);
       }
     };
@@ -652,23 +712,6 @@ export default function App() {
     );
   }, [activeWeather, activeLocation, state.settings, isRefreshing]);
 
-  useEffect(() => {
-    const handleScroll = () => {
-      const currentScrollY = window.scrollY;
-      
-      // Only show header at the very top as requested
-      if (currentScrollY < 40) {
-        setHeaderVisible(true);
-      } else {
-        setHeaderVisible(false);
-      }
-      
-      lastScrollY.current = currentScrollY;
-    };
-    window.addEventListener('scroll', handleScroll, { passive: true });
-    return () => window.removeEventListener('scroll', handleScroll);
-  }, []);
-
   return (
     <div className="min-h-screen bg-app-bg text-app-text font-sans selection:bg-app-text/20 transition-colors duration-500">
       <AtmosphereFX 
@@ -678,7 +721,8 @@ export default function App() {
         locationName={activeLocation?.name ?? ''}
       />
 
-      <div className="fixed top-0 left-1/2 -translate-x-1/2 w-full max-w-[390px] h-24 z-[100] pointer-events-none">
+      {/* LAYER 1: UI OVERLAY - Permanently Fixed */}
+      <div id="ui-overlay" className="fixed top-0 left-1/2 -translate-x-1/2 w-full max-w-[390px] h-24 pointer-events-none">
         <motion.div 
           className="w-full h-full relative"
           initial={false}
@@ -686,16 +730,17 @@ export default function App() {
             y: headerVisible ? 0 : -100,
             opacity: headerVisible ? 1 : 0,
           }}
-          transition={{ duration: 0.3, ease: 'easeOut' }}
+          transition={{ type: 'spring', stiffness: 400, damping: 40, mass: 1 }}
         >
           {/* Add City Button - Top Left */}
-          <motion.div className="absolute left-6 top-6 pointer-events-auto">
+          <div className="absolute left-6 top-8 pointer-events-auto">
             <motion.button 
+              id="add-city-btn"
               onClick={() => {
                 Haptic.light(state.settings.hapticEnabled);
                 setShowCityManager(true);
               }}
-              className="w-12 h-12 bg-app-text/5 border border-app-border rounded-full flex items-center justify-center text-app-text active:scale-95 transition-all shadow-xl"
+              className="w-11 h-11 bg-white/10 backdrop-blur-md border border-white/10 rounded-full flex items-center justify-center text-app-text active:scale-95 transition-all shadow-lg"
               initial={false}
               animate={{
                 opacity: state.showSettings || showCityManager ? 0 : 1,
@@ -703,15 +748,16 @@ export default function App() {
                 scale: state.showSettings || showCityManager ? 0.8 : 1,
               }}
             >
-              <Icons.LayoutGrid className="w-5 h-5 text-app-text-dim" strokeWidth={1.5} />
+              <Icons.LayoutGrid className="w-5 h-5 text-app-text" strokeWidth={1.5} />
             </motion.button>
-          </motion.div>
+          </div>
 
           {/* Settings Button - Top Right */}
-          <motion.div className="absolute right-6 top-6 pointer-events-auto">
+          <div className="absolute right-6 top-8 pointer-events-auto">
             <motion.button 
+              id="settings-btn"
               onClick={toggleSettings}
-              className="group active:scale-95 transition-all w-12 h-12 flex items-center justify-center"
+              className="group active:scale-95 transition-all w-11 h-11 flex items-center justify-center min-w-[44px]"
             >
               <AnimatePresence mode="wait">
                 {state.showSettings ? (
@@ -722,8 +768,8 @@ export default function App() {
                     exit={{ opacity: 0, x: 10 }}
                     className="flex items-center text-app-text pr-2"
                   >
-                    <Icons.ChevronLeft className="w-6 h-6 mr-0.5" strokeWidth={2.5} />
-                    <span className="text-[17px] font-medium text-app-text">Back</span>
+                    <Icons.ChevronLeft className="w-5 h-5 mr-0.5" strokeWidth={2.5} />
+                    <span className="text-[16px] font-medium text-app-text">Back</span>
                   </motion.div>
                 ) : (
                   <motion.div
@@ -731,17 +777,17 @@ export default function App() {
                     initial={{ opacity: 0, scale: 0.8 }}
                     animate={{ opacity: 1, scale: 1 }}
                     exit={{ opacity: 0, scale: 0.8 }}
-                    className="w-12 h-12 bg-app-text/5 border border-app-border rounded-full flex items-center justify-center text-app-text-dim group-hover:text-app-text transition-colors shadow-xl"
+                    className="w-11 h-11 bg-white/10 backdrop-blur-md border border-white/10 rounded-full flex items-center justify-center text-app-text group-hover:text-app-text transition-colors shadow-lg"
                   >
                     <Icons.Settings2 className="w-5 h-5" />
                   </motion.div>
                 )}
               </AnimatePresence>
             </motion.button>
-          </motion.div>
+          </div>
 
           {/* City Name & Pagination - Center */}
-          <div className="absolute left-1/2 -translate-x-1/2 top-6 flex flex-col items-center pointer-events-none mt-2">
+          <div id="city-dots" className="absolute left-1/2 -translate-x-1/2 top-9 flex flex-col items-center pointer-events-none">
             <AnimatePresence mode="wait">
               <motion.div 
                 key={activeLocation?.id || activeLocation?.name || 'loading'}
@@ -753,20 +799,22 @@ export default function App() {
                 exit={{ opacity: 0, y: 10 }}
                 className="flex flex-col items-center"
               >
-                <span className="text-[17px] font-semibold text-app-text">{activeLocation?.name || 'Loading...'}</span>
-                
-                {isOffline && (
-                  <motion.div 
-                    initial={{ opacity: 0, scale: 0.8 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    className="flex items-center gap-1 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-full mt-1"
-                  >
-                    <Icons.CloudOff className="w-2.5 h-2.5 text-amber-500" />
-                    <span className="text-[9px] font-bold text-amber-500 uppercase tracking-widest">Offline</span>
-                  </motion.div>
-                )}
+                <div className="flex flex-col items-center gap-0.5">
+                  <span className="text-[17px] font-semibold text-app-text leading-tight">{activeLocation?.name || 'Loading...'}</span>
+                  
+                  {isOffline && (
+                    <motion.div 
+                      initial={{ opacity: 0, scale: 0.8 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      className="flex items-center gap-1 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-full"
+                    >
+                      <Icons.CloudOff className="w-2.5 h-2.5 text-amber-500" />
+                      <span className="text-[9px] font-bold text-amber-500 uppercase tracking-widest">Offline</span>
+                    </motion.div>
+                  )}
+                </div>
 
-                <div className="flex gap-1.5 mt-1.5">
+                <div className="flex gap-1.5 mt-2">
                   {state.locations.map((_, i) => (
                     <button 
                       key={i} 
@@ -848,7 +896,8 @@ export default function App() {
       </AnimatePresence>
 
       <main 
-        className="max-w-[390px] mx-auto px-6 pt-24 pb-32 min-h-screen relative touch-pan-y"
+        id="swipe-layer"
+        className="max-w-[390px] mx-auto px-6 pt-24 pb-32 min-h-screen relative touch-pan-y gpu will-change-transform"
       >
         {/* Pull to refresh logic handled by gestures.ts */}
         

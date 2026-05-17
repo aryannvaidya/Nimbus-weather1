@@ -3,6 +3,7 @@ import { motion } from 'motion/react';
 import { WeatherData, Location, Settings } from '../types';
 import { WeatherIcon, Icons } from './WeatherIcons';
 import { getWeatherInfo } from '../services/weatherService';
+import { formatTemp, formatWind } from '../lib/units';
 import { cn } from '../lib/utils';
 import { format, parseISO, isAfter, startOfHour } from 'date-fns';
 
@@ -15,11 +16,6 @@ interface WidgetViewProps {
 
 export default function WidgetView({ weather, location, settings, onRefresh }: WidgetViewProps) {
   const info = getWeatherInfo(weather.current.weatherCode, weather.current.isDay);
-
-  const convert = (temp: number) => {
-    if (settings.unitTemp === 'F') return Math.round((temp * 1.8) + 32);
-    return Math.round(temp);
-  };
 
   // Dynamic color palette based on weather
   const getThemeColors = () => {
@@ -124,17 +120,17 @@ export default function WidgetView({ weather, location, settings, onRefresh }: W
       <div className="flex flex-col z-10 mt-1">
         <div className="flex items-start">
           <span className="text-[72px] leading-none font-[200] tracking-tighter text-white">
-            {convert(weather.current.temperature)}
+            {formatTemp(weather.current.temperature, settings.unitTemp)}
           </span>
           <span className="text-2xl font-light text-white/40 mt-2">°</span>
         </div>
         
         <div className="flex items-center gap-2 mt-2">
           <span className="text-[11px] font-bold text-white/40 uppercase tracking-widest bg-white/5 px-2 py-0.5 rounded-md border border-white/5">
-            H: {convert(weather.daily.temperatureMax?.[0] ?? 0)}°
+            H: {formatTemp(weather.daily.temperatureMax?.[0] ?? 0, settings.unitTemp)}°
           </span>
           <span className="text-[11px] font-bold text-white/40 uppercase tracking-widest bg-white/5 px-2 py-0.5 rounded-md border border-white/5">
-            L: {convert(weather.daily.temperatureMin?.[0] ?? 0)}°
+            L: {formatTemp(weather.daily.temperatureMin?.[0] ?? 0, settings.unitTemp)}°
           </span>
         </div>
       </div>
@@ -191,9 +187,9 @@ export default function WidgetView({ weather, location, settings, onRefresh }: W
           <Icons.Droplets className="w-3.5 h-3.5 text-blue-400" />
           <span className="text-[11px] font-bold text-white/40 tracking-tighter">{rainChance}%</span>
         </div>
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5" title="Wind Speed">
           <Icons.Wind className="w-3.5 h-3.5 text-sky-400" strokeWidth={2} />
-          <span className="text-[11px] font-bold text-white/40 tracking-tighter">{weather.current.windSpeed} km/h</span>
+          <span className="text-[11px] font-bold text-white/40 tracking-tighter">{formatWind(weather.current.windSpeed, settings.unitWind)} {settings.unitWind}</span>
         </div>
         <div className="flex items-center gap-1.5">
           <Icons.Sun className="w-3.5 h-3.5 text-amber-400" />

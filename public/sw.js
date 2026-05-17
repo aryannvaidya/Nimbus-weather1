@@ -1,16 +1,16 @@
 const CACHE_NAME = "nimbus-weather-v1";
 const ASSETS_TO_CACHE = [
   "/",
-  "/index.html",
-  "/src/main.tsx",
-  "/src/App.tsx",
-  "/src/index.css"
+  "/index.html"
 ];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(ASSETS_TO_CACHE);
+      // Use slice to avoid failing entire install if one asset fails
+      return Promise.allSettled(
+        ASSETS_TO_CACHE.map(url => cache.add(url))
+      );
     })
   );
 });
@@ -30,9 +30,10 @@ self.addEventListener("activate", (event) => {
 });
 
 self.addEventListener("fetch", (event) => {
+  // Simple network-first strategy to avoid "Script error" issues with Vite dev server
   event.respondWith(
-    caches.match(event.request).then((response) => {
-      return response || fetch(event.request);
+    fetch(event.request).catch(() => {
+      return caches.match(event.request);
     })
   );
 });

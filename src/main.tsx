@@ -1,15 +1,4 @@
 import {StrictMode} from 'react';
-
-window.addEventListener("error", (e) => {
-  document.body.insertAdjacentHTML("afterbegin", `
-    <div style="position:fixed;top:0;left:0;right:0;
-    background:#ff000099;color:white;padding:12px;
-    font-size:12px;z-index:99999;font-family:monospace;">
-      ERROR: ${e.message} (line ${e.lineno})
-    </div>
-  `);
-});
-
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';

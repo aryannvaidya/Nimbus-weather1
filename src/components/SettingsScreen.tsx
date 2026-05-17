@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { convertTemp, formatTemp, formatWind, formatVisibility, formatPrecipitation } from '../lib/units';
 import { motion, AnimatePresence } from 'motion/react';
 import { Icons, WeatherIcon } from './WeatherIcons';
 import { Settings, WeatherData, Location } from '../types';
@@ -43,10 +44,15 @@ const ToggleRow = ({ label, description, value, onToggle, hapticEnabled }: { lab
       <motion.div 
         layout
         className={cn(
-          "absolute top-[2px] w-[27px] h-[27px] rounded-full bg-white shadow-md",
+          "absolute top-[2px] w-[27px] h-[27px] rounded-full bg-white shadow-md will-change-transform",
           value ? "left-[22px]" : "left-[2px]"
         )} 
-        transition={{ type: "spring", stiffness: 500, damping: 30 }}
+        transition={{ 
+          type: "spring", 
+          stiffness: 700, 
+          damping: 35,
+          mass: 0.5
+        }}
       />
     </button>
   </div>
@@ -74,8 +80,14 @@ const SegmentedControl = ({ value, options, onChange, hapticEnabled }: { value: 
           {isSelected && (
             <motion.div
               layoutId="segment-indicator"
-              className="absolute inset-0 bg-app-surface rounded-[10px] shadow-[0_2px_8px_rgba(0,0,0,0.12)] border border-app-border -z-10"
-              transition={{ type: "spring", bounce: 0.2, duration: 0.4 }}
+              className="absolute inset-0 bg-app-surface rounded-[10px] shadow-[0_2px_8px_rgba(0,0,0,0.12)] border border-app-border -z-10 will-change-transform"
+              transition={{ 
+                type: "spring", 
+                bounce: 0.15, 
+                duration: 0.35,
+                stiffness: 400,
+                damping: 30
+              }}
             />
           )}
         </button>
@@ -259,10 +271,15 @@ const SettingsScreen = ({ settings: globalSettings, onUpdate, onClose, activeWea
 
   const SubView = ({ title, content, onClose }: { title: string; content: string; onClose: () => void }) => (
     <motion.div 
-      initial={{ opacity: 0, scale: 0.95, y: 20 }}
+      initial={{ opacity: 0, scale: 0.98, y: 15 }}
       animate={{ opacity: 1, scale: 1, y: 0 }}
-      exit={{ opacity: 0, scale: 0.95, y: 20 }}
-      className="fixed inset-0 z-[100] bg-app-bg/95 backdrop-blur-2xl px-6 py-20 overflow-y-auto"
+      exit={{ opacity: 0, scale: 0.98, y: 15 }}
+      transition={{ 
+        type: "spring",
+        stiffness: 400,
+        damping: 30
+      }}
+      className="fixed inset-0 z-[100] bg-app-bg/95 backdrop-blur-2xl px-6 py-20 overflow-y-auto gpu will-change-transform"
     >
       <div className="max-w-[390px] mx-auto min-h-full flex flex-col">
         <header className="flex items-center justify-between mb-10">
@@ -400,16 +417,17 @@ const SettingsScreen = ({ settings: globalSettings, onUpdate, onClose, activeWea
 
   return (
     <motion.div 
-      initial={{ opacity: 0, scale: 0.95 }}
-      animate={{ opacity: 1, scale: 1 }}
-      exit={{ opacity: 0, scale: 0.95 }}
+      initial={{ opacity: 0, y: 40, scale: 0.99 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: 40, scale: 0.99 }}
       transition={{ 
         type: "spring", 
-        damping: 25, 
-        stiffness: 400, 
-        mass: 0.5 
+        damping: 28, 
+        stiffness: 350, 
+        mass: 0.8,
+        velocity: 2
       }}
-      className="fixed inset-0 z-50 bg-app-bg overflow-y-auto gpu settings-panel touch-pan-y"
+      className="fixed inset-0 z-50 bg-app-bg overflow-y-auto gpu settings-panel touch-pan-y will-change-transform"
       data-no-swipe
     >
       <div className="max-w-[390px] mx-auto min-h-screen px-6 pt-32 pb-24">
@@ -477,6 +495,16 @@ const SettingsScreen = ({ settings: globalSettings, onUpdate, onClose, activeWea
               { label: 'mi', value: 'miles' }
             ]}
             onChange={(val) => updateSetting('unitVisibility', val)}
+          />
+          <SelectRow 
+            label="Precipitation" 
+            value={localSettings.unitPrecipitation} 
+            hapticEnabled={localSettings.hapticEnabled}
+            options={[
+              { label: 'mm', value: 'mm' },
+              { label: 'in', value: 'inches' }
+            ]}
+            onChange={(val) => updateSetting('unitPrecipitation', val)}
           />
         </Section>
 
