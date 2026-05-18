@@ -70,9 +70,14 @@ export default function SearchBar({ onSelect, onClose, hapticEnabled }: SearchBa
 
   return (
     <motion.div 
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
+      initial={{ opacity: 0, y: 30, scale: 0.98 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: 30, scale: 0.98 }}
+      transition={{ 
+        duration: 0.5, 
+        ease: [0.22, 1, 0.36, 1],
+        opacity: { duration: 0.3 }
+      }}
       className="fixed inset-0 z-[100] bg-app-bg/90 backdrop-blur-2xl flex flex-col pt-[calc(env(safe-area-inset-top)+24px)]"
     >
       <div className="max-w-[390px] mx-auto w-full px-6 flex flex-col h-full">

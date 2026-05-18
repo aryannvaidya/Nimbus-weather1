@@ -250,21 +250,24 @@ const LoopingWeatherIcon = () => {
   }, []);
 
   return (
-    <AnimatePresence mode="wait">
-      <motion.div
-        key={icons[index]}
-        initial={{ opacity: 0, scale: 0.8, rotate: -10 }}
-        animate={{ opacity: 1, scale: 1, rotate: 0 }}
-        exit={{ opacity: 0, scale: 1.1, rotate: 10 }}
-        transition={{ duration: 0.5, ease: "easeOut" }}
-      >
-        <WeatherIcon 
-          name={icons[index] as any} 
-          className="w-16 h-16 drop-shadow-[0_0_15px_rgba(255,255,255,0.2)]" 
-          style="coloured" 
-        />
-      </motion.div>
-    </AnimatePresence>
+    <div className="relative w-16 h-16 flex items-center justify-center">
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={icons[index]}
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          exit={{ opacity: 0, scale: 1.1 }}
+          transition={{ duration: 0.4, ease: "easeInOut" }}
+          className="absolute inset-0 flex items-center justify-center"
+        >
+          <WeatherIcon 
+            name={icons[index] as any} 
+            className="w-16 h-16 drop-shadow-[0_0_15px_rgba(255,255,255,0.2)]" 
+            style="coloured" 
+          />
+        </motion.div>
+      </AnimatePresence>
+    </div>
   );
 };
 
@@ -272,6 +275,39 @@ const SettingsScreen = ({ settings: globalSettings, onUpdate, onClose, activeWea
   const [localSettings, setLocalSettings] = useState(globalSettings);
   const [showAbout, setShowAbout] = useState(false);
   const [activeSubView, setActiveSubView] = useState<'none' | 'agreement' | 'privacy'>('none');
+  const aboutScrollRef = React.useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (showAbout) {
+      const resetScroll = () => {
+        if (aboutScrollRef.current) {
+          aboutScrollRef.current.scrollTop = 0;
+          aboutScrollRef.current.scrollLeft = 0;
+        }
+        window.scrollTo(0, 0);
+        
+        // Direct DOM access as fallback/double-check
+        const aboutPage = document.getElementById("about-page");
+        if (aboutPage) {
+          aboutPage.scrollTop = 0;
+          aboutPage.scrollLeft = 0;
+        }
+      };
+
+      // Execute across multiple frames and timeouts to fight browser scroll restoration
+      resetScroll();
+      requestAnimationFrame(resetScroll);
+      const t1 = setTimeout(resetScroll, 50);
+      const t2 = setTimeout(resetScroll, 150);
+      const t3 = setTimeout(resetScroll, 300);
+      
+      return () => {
+        clearTimeout(t1);
+        clearTimeout(t2);
+        clearTimeout(t3);
+      };
+    }
+  }, [showAbout]);
 
   const pushPanel = (closeFn: () => void, name: string) => {
     window.history.pushState({ panel: name }, "");
@@ -357,7 +393,7 @@ const SettingsScreen = ({ settings: globalSettings, onUpdate, onClose, activeWea
       },
       privacy: {
         title: "Privacy Notice",
-        content: "We respect your digital privacy. This Application is designed to function with minimal data footprint. Your precise location data is processed locally to fetch hyper-local weather alerts and is never transmitted to our servers for storage or profiling.\n\nWe do not sell, rent, or lease your personal data to third parties. Any analytical data collected is fully anonymized and used solely to improve application performance and stability.\n\nYour saved locations and settings are stored locally on your device via browser storage. We have no access to this data. For integrated services like Open-Meteo, please refer to their respective privacy documentation regarding IP-based data processing."
+        content: "We respect your digital privacy. This Application is designed to function with minimal data footprint. Your precise location data is processed locally to fetch hyper-local weather alerts and is never transmitted to our servers for storage or profiling.\n\nWe do not collect any data. Any analytical data is fully anonymized and used solely to improve application performance and stability.\n\nYour saved locations and settings are stored locally on your device via browser storage. We have no access to this data. For integrated services like Open-Meteo, please refer to their respective privacy documentation regarding IP-based data processing."
       }
     };
     return <SubView title={views[activeSubView].title} content={views[activeSubView].content} onClose={() => handleBack()} />;
@@ -366,64 +402,28 @@ const SettingsScreen = ({ settings: globalSettings, onUpdate, onClose, activeWea
   if (showAbout) {
     return (
       <motion.div 
-      initial={{ opacity: 0, x: 20 }}
-      animate={{ opacity: 1, x: 0 }}
-      exit={{ opacity: 0, x: 20 }}
-      className="fixed inset-0 z-[60] bg-app-bg overflow-y-auto about-page touch-pan-y"
-    >
+        ref={aboutScrollRef}
+        id="about-page"
+        initial={{ opacity: 0, x: 20 }}
+        animate={{ opacity: 1, x: 0 }}
+        exit={{ opacity: 0, x: 20 }}
+        className="fixed inset-0 z-[60] bg-app-bg overflow-y-auto about-page touch-pan-y"
+      >
         <div className="max-w-[390px] mx-auto min-h-screen px-6 pt-[calc(env(safe-area-inset-top)+24px)] pb-32">
-          <header className="flex items-center mb-12 px-1">
-             <button 
-              onClick={() => {
-                handleBack();
-              }}
-              className="flex items-center text-app-text"
-            >
-              <span className="text-[17px] font-medium text-app-text">Back</span>
-            </button>
+          <header className="flex items-center mb-12 px-1 h-10">
+             {/* Redundant back button removed as App.tsx provides a z-index:70 button at this position */}
           </header>
 
           <div className="flex flex-col items-center px-4">
-             <motion.div 
-               style={{ 
-                 perspective: 1000 
-               }}
-               initial={{ opacity: 0, y: 20 }}
-               animate={{ opacity: 1, y: 0 }}
-               className="flex flex-col items-center text-center mb-16 w-full"
-             >
-                <motion.div 
-                  className="flex items-center gap-5 mb-4"
-                  animate={{ 
-                    y: [0, -10, 0],
-                  }}
-                  transition={{ 
-                    duration: 4, 
-                    repeat: Infinity, 
-                    ease: "easeInOut" 
-                  }}
-                >
-                   <motion.div 
-                     className="relative"
-                     animate={{ 
-                       x: [0, 5, -5, 0],
-                       y: [0, -10, 10, 0],
-                       rotate: [0, -2, 2, 0]
-                     }}
-                     transition={{ 
-                       duration: 6, 
-                       repeat: Infinity, 
-                       ease: "easeInOut" 
-                     }}
-                   >
-                     <LoopingWeatherIcon />
-                   </motion.div>
-                   <h1 className="text-[32px] font-black tracking-[-0.04em] text-app-text uppercase">
+             <div className="flex flex-col items-center text-center mb-16 w-full">
+                <div className="flex items-center gap-5 mb-4">
+                   <LoopingWeatherIcon />
+                   <h1 className="text-[28px] xs:text-[32px] font-black tracking-[-0.04em] text-app-text uppercase whitespace-nowrap">
                      Nimbus Weather
                    </h1>
-                </motion.div>
+                </div>
                 <div className="h-px w-12 bg-app-text/10" />
-             </motion.div>
+             </div>
              
              <div className="bg-app-surface/40 backdrop-blur-md border border-app-border rounded-[24px] overflow-hidden w-full mb-16 shadow-sm">
                 <button 

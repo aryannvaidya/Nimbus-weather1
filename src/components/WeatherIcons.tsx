@@ -45,7 +45,8 @@ import {
   Mountain,
   Plane,
   Map,
-  Zap
+  Zap,
+  ArrowLeft
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { motion } from 'motion/react';
@@ -97,7 +98,8 @@ export const RawIcons = {
   Mountain,
   Plane,
   Map,
-  Zap
+  Zap,
+  ArrowLeft
 };
 
 export type IconType = keyof typeof RawIcons;

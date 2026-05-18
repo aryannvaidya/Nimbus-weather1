@@ -922,8 +922,7 @@ export default function App() {
                     exit={{ opacity: 0, x: 10 }}
                     className="flex items-center text-app-text pr-2"
                   >
-                    <Icons.ChevronLeft className="w-6 h-6 mr-0.5" strokeWidth={2.5} />
-                    <span className="text-[17px] font-medium text-app-text">Back</span>
+                    <Icons.ChevronLeft className="w-6 h-6" strokeWidth={2.5} />
                   </motion.div>
                 ) : (
                   <motion.div
@@ -1059,29 +1058,7 @@ export default function App() {
         {/* Pull to refresh logic handled by gestures.ts */}
         
         <AnimatePresence>
-          {locationPermissionError && (
-            <motion.div 
-              initial={{ opacity: 0, y: -20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -20 }}
-              className="mb-4 p-4 bg-blue-500/10 border border-blue-500/20 rounded-2xl flex gap-3 relative overflow-hidden"
-            >
-              <div className="absolute inset-0 bg-blue-500/5 animate-pulse" />
-              <Icons.Navigation className="w-5 h-5 text-blue-400 flex-shrink-0" />
-              <div className="flex flex-col gap-1 relative z-10">
-                <p className="text-[11px] font-black text-blue-400 uppercase tracking-widest leading-none mb-1">Location Services</p>
-                <p className="text-[13px] text-app-text-dim leading-relaxed">
-                  Weather accuracy is better with GPS. Please enable device location and allow browser access.
-                </p>
-                <button 
-                  onClick={() => setLocationPermissionError(false)}
-                  className="text-[10px] font-bold text-app-text/40 uppercase tracking-widest mt-2 hover:text-app-text transition-colors text-left"
-                >
-                  Dismiss
-                </button>
-              </div>
-            </motion.div>
-          )}
+
 
           {isOffline && (
             <motion.div 

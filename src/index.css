@@ -1,37 +1,84 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;500;600&display=swap');
 @import "tailwindcss";
 
-*,
-*::before,
-*::after {
-  /* Firefox */
-  scrollbar-width: none !important;
-  
-  /* IE and Edge */
-  -ms-overflow-style: none !important;
+/* ============================================
+   SCROLLBAR — AMOLED INVISIBLE
+   ============================================ */
+
+/* Firefox */
+* {
+  scrollbar-width: thin !important;
+  scrollbar-color: #000000 transparent !important;
 }
 
-/* Chrome, Safari, Brave, WebView */
+/* Chrome, Brave, Safari, WebView — Vertical */
 *::-webkit-scrollbar {
-  display: none !important;
-  width: 0 !important;
-  height: 0 !important;
+  width: 1px !important;
+  height: 1px !important;
   background: transparent !important;
 }
 
 *::-webkit-scrollbar-track {
-  display: none !important;
   background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
 }
 
 *::-webkit-scrollbar-thumb {
-  display: none !important;
-  background: transparent !important;
+  background: #000000 !important;
+  border-radius: 0 !important;
+  border: none !important;
+  box-shadow: none !important;
+  min-height: 0 !important;
+  min-width: 0 !important;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: #000000 !important;
 }
 
 *::-webkit-scrollbar-corner {
-  display: none !important;
   background: transparent !important;
+}
+
+/* Horizontal scrollbar specifically 
+   for hourly forecast */
+.hourly-forecast::-webkit-scrollbar,
+.hourly-container::-webkit-scrollbar,
+.hourly-scroll::-webkit-scrollbar,
+[class*="hourly"]::-webkit-scrollbar {
+  height: 1px !important;
+  width: 0 !important;
+  background: transparent !important;
+}
+
+.hourly-forecast::-webkit-scrollbar-thumb,
+.hourly-container::-webkit-scrollbar-thumb,
+.hourly-scroll::-webkit-scrollbar-thumb,
+[class*="hourly"]::-webkit-scrollbar-thumb {
+  background: #000000 !important;
+  height: 1px !important;
+}
+
+/* Main page vertical scrollbar */
+body::-webkit-scrollbar,
+html::-webkit-scrollbar,
+.city-card::-webkit-scrollbar,
+[class*="container"]::-webkit-scrollbar,
+[class*="page"]::-webkit-scrollbar,
+[class*="panel"]::-webkit-scrollbar {
+  width: 1px !important;
+  background: transparent !important;
+}
+
+body::-webkit-scrollbar-thumb,
+html::-webkit-scrollbar-thumb,
+.city-card::-webkit-scrollbar-thumb,
+[class*="container"]::-webkit-scrollbar-thumb,
+[class*="page"]::-webkit-scrollbar-thumb,
+[class*="panel"]::-webkit-scrollbar-thumb {
+  background: #000000 !important;
+  width: 1px !important;
 }
 
 @theme {
@@ -108,9 +155,6 @@ input, textarea, [contenteditable="true"] {
 
 /* Optimize scrolling performance */
 html {
-  scrollbar-width: none !important;
-  -ms-overflow-style: none !important;
-  overflow: -moz-scrollbars-none !important;
   scroll-behavior: smooth;
   overscroll-behavior: none;
   width: 100%;
@@ -122,15 +166,8 @@ html {
   box-sizing: border-box;
 }
 
-html::-webkit-scrollbar { 
-  display: none !important; 
-  width: 0 !important;
-}
-
 body {
   @apply bg-app-bg text-app-text antialiased overflow-x-hidden;
-  scrollbar-width: none !important;
-  -ms-overflow-style: none !important;
   overflow-x: hidden !important;
   font-family: var(--font-sans);
   transition: background-color 0.15s ease-out, color 0.15s ease-out;
@@ -150,36 +187,31 @@ body {
   box-sizing: border-box;
 }
 
-body::-webkit-scrollbar { 
-  display: none !important;
-  width: 0 !important;
-}
-
 /* Hourly forecast horizontal scroll */
 .hourly-forecast,
 .hourly-container,
 .hourly-scroll,
 [class*="hourly"] {
-  scrollbar-width: none !important;
-  -ms-overflow-style: none !important;
   overflow-x: auto !important;
   overflow-y: hidden !important;
   -webkit-overflow-scrolling: touch !important;
 }
 
-.hourly-forecast::-webkit-scrollbar,
-.hourly-container::-webkit-scrollbar,
-.hourly-scroll::-webkit-scrollbar,
-[class*="hourly"]::-webkit-scrollbar {
-  display: none !important;
-  width: 0 !important;
-  height: 0 !important;
+/* All scrollable panels */
+#about-page,
+.about-page {
+  position: fixed !important;
+  inset: 0 !important;
+  overflow-y: auto !important; 
+  overflow-x: hidden !important;
+  scroll-behavior: auto !important;
+  overscroll-behavior: contain !important;
+  -webkit-overflow-scrolling: touch !important;
+  z-index: 60;
 }
 
-/* All scrollable panels */
 .city-card,
 .settings-panel,
-.about-page,
 .map-page,
 .add-city-panel,
 [class*="panel"],
@@ -187,23 +219,6 @@ body::-webkit-scrollbar {
 [class*="container"],
 [class*="scroll"],
 [class*="page"] {
-  scrollbar-width: none !important;
-  -ms-overflow-style: none !important;
-}
-
-.city-card::-webkit-scrollbar,
-.settings-panel::-webkit-scrollbar,
-.about-page::-webkit-scrollbar,
-.map-page::-webkit-scrollbar,
-.add-city-panel::-webkit-scrollbar,
-[class*="panel"]::-webkit-scrollbar,
-[class*="card"]::-webkit-scrollbar,
-[class*="container"]::-webkit-scrollbar,
-[class*="scroll"]::-webkit-scrollbar,
-[class*="page"]::-webkit-scrollbar {
-  display: none !important;
-  width: 0 !important;
-  height: 0 !important;
 }
 
 #root, .app-container {
