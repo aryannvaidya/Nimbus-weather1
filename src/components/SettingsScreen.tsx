@@ -5,7 +5,18 @@ import { Icons, WeatherIcon } from './WeatherIcons';
 import { Settings, WeatherData, Location } from '../types';
 import { cn, GLASS_STYLE_SUBTLE } from '../lib/utils';
 import { Haptic } from '../lib/haptics';
-import { initializeOneSignal, requestNotificationPermission, syncUserSettingsToFirebase, fetchUserSettingsFromFirebase } from '../services/oneSignalService';
+import { 
+  initializeOneSignal, 
+  requestNotificationPermission, 
+  syncUserSettingsToFirebase, 
+  fetchUserSettingsFromFirebase,
+  wirePushToggle,
+  wireMorningToggle,
+  wireNightToggle,
+  wireThresholdToggle,
+  applyNotifToggleStates
+} from '../services/oneSignalService';
+import { Package, Cloud, FileText, Shield, ArrowUpRight } from 'lucide-react';
 
 interface SettingsScreenProps {
   settings: Settings;
@@ -227,12 +238,104 @@ const SliderRow = ({
   );
 };
 
-const PoweredByPill = ({ label, icon }: { label: string; icon: string }) => (
-  <div className="flex items-center gap-3 px-6 py-3.5 rounded-full bg-white/[0.03] border border-white/10 backdrop-blur-xl shadow-inner">
-    <span className="text-[20px] filter drop-shadow-sm leading-none flex items-center justify-center">{icon}</span>
-    <span className="text-[15px] font-bold text-app-text/90 tracking-tight whitespace-nowrap">{label}</span>
-  </div>
+const ExternalLinkIcon = ({ className }: { className?: string }) => (
+  <svg 
+    viewBox="0 0 24 24" 
+    fill="none" 
+    stroke="currentColor" 
+    strokeWidth="1.8" 
+    strokeLinecap="round" 
+    strokeLinejoin="round" 
+    className={className}
+  >
+    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+    <polyline points="15 3 21 3 21 9" />
+    <line x1="10" y1="14" x2="21" y2="3" />
+  </svg>
 );
+
+const SourceCard = ({ 
+  title, 
+  subtitle, 
+  url, 
+  hapticEnabled 
+}: { 
+  title: string; 
+  subtitle: string; 
+  url: string; 
+  hapticEnabled: boolean;
+}) => (
+  <a 
+    href={url}
+    target="_blank"
+    rel="noopener noreferrer"
+    onClick={() => {
+      Haptic.light(hapticEnabled);
+    }}
+    className="block w-full text-left py-3.5 px-4 mb-3 bg-white/[0.03] border border-white/[0.08] rounded-[16px] backdrop-blur-md active:scale-[0.98] transition-all duration-200 hover:border-white/15"
+  >
+    <div className="flex items-center justify-between gap-3">
+      <h4 className="text-[15px] font-semibold text-white tracking-tight">{title}</h4>
+      <div className="flex items-center gap-1.5 text-[12px] text-app-text-dim/55 font-mono select-none">
+        <span>{url.replace('https://', '').replace('www.', '').replace(/\/$/, '')}</span>
+        <ExternalLinkIcon className="w-3.5 h-3.5 opacity-70" />
+      </div>
+    </div>
+    <p className="text-[12px] text-app-text-dim/75 mt-1 leading-snug">{subtitle}</p>
+  </a>
+);
+
+interface AboutRowProps {
+  icon: React.ComponentType<{ className?: string }>;
+  title: string;
+  subtitle: string;
+  rightElement?: React.ReactNode;
+  onClick?: () => void;
+  hapticEnabled: boolean;
+}
+
+const AboutRow = ({ 
+  icon: IconComponent, 
+  title, 
+  subtitle, 
+  rightElement, 
+  onClick, 
+  hapticEnabled 
+}: AboutRowProps) => {
+  const content = (
+    <div className="flex items-center gap-4 w-full">
+      <div className="w-10 h-10 rounded-xl bg-white/[0.04] border border-white/[0.06] flex items-center justify-center text-white flex-shrink-0">
+        <IconComponent className="w-5 h-5 text-app-text" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-[15px] font-semibold text-white tracking-tight leading-tight">{title}</p>
+        <p className="text-[13px] text-app-text-dim mt-1 leading-snug">{subtitle}</p>
+      </div>
+      {rightElement && <div className="flex-shrink-0 ml-1">{rightElement}</div>}
+    </div>
+  );
+
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        onClick={() => {
+          Haptic.light(hapticEnabled);
+          onClick();
+        }}
+        className="w-full p-5 flex items-center justify-between text-left active:bg-white/[0.03] transition-colors hover:bg-white/[0.01]"
+      >
+        {content}
+      </button>
+    );
+  }
+
+  return (
+    <div className="w-full p-5 flex items-center justify-between text-left">
+      {content}
+    </div>
+  );
+};
 
 const LoopingWeatherIcon = () => {
   const [index, setIndex] = useState(0);
@@ -282,10 +385,57 @@ const SettingsScreen = ({
   useEffect(() => {
     setLocalSettings(globalSettings);
   }, [globalSettings]);
-  const [showAbout, setShowAbout] = useState(false);
+  const [showDataSources, setShowDataSources] = useState(false);
+  const [showTilesCustomisation, setShowTilesCustomisation] = useState(false);
   const [activeSubView, setActiveSubView] = useState<'none' | 'agreement' | 'privacy'>('none');
   const [pushStatus, setPushStatus] = useState<'idle' | 'registering' | 'synced' | 'error' | 'denied'>('idle');
-  const aboutScrollRef = React.useRef<HTMLDivElement>(null);
+  const scrollRef = React.useRef<HTMLDivElement>(null);
+  const mainScrollRef = React.useRef<HTMLDivElement>(null);
+  const savedMainScrollPos = React.useRef<number>(0);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+  };
+
+  useEffect(() => {
+    if (toastMessage) {
+      const timer = setTimeout(() => {
+        setToastMessage(null);
+      }, 2500);
+      return () => clearTimeout(timer);
+    }
+  }, [toastMessage]);
+
+  // Track scroll position of the main panel and restore it when returning from subviews
+  useEffect(() => {
+    const isSubActive = activeSubView !== 'none' || showDataSources || showTilesCustomisation;
+    
+    if (isSubActive) {
+      // User is exiting the main Settings panel into a subview: save position
+      if (mainScrollRef.current) {
+        savedMainScrollPos.current = mainScrollRef.current.scrollTop;
+      }
+    } else {
+      // User is returning to the main Settings page: restore scroll position
+      if (mainScrollRef.current && savedMainScrollPos.current > 0) {
+        const restore = () => {
+          if (mainScrollRef.current) {
+            mainScrollRef.current.scrollTop = savedMainScrollPos.current;
+          }
+        };
+        // Execute immediately and in multiple sequential microtasks to beat browser rendering cycles
+        restore();
+        requestAnimationFrame(restore);
+        const t1 = setTimeout(restore, 20);
+        const t2 = setTimeout(restore, 100);
+        return () => {
+          clearTimeout(t1);
+          clearTimeout(t2);
+        };
+      }
+    }
+  }, [activeSubView, showDataSources, showTilesCustomisation]);
 
   useEffect(() => {
     const runInit = async () => {
@@ -335,6 +485,7 @@ const SettingsScreen = ({
       setLocalSettings(updated);
       onUpdate(updated);
       setPushStatus('idle');
+      await wirePushToggle(false, showToast);
 
       if (localSettings.oneSignalPlayerId) {
         syncUserSettingsToFirebase(localSettings.oneSignalPlayerId, updated, activeLocation || null)
@@ -349,6 +500,7 @@ const SettingsScreen = ({
           const updated = { ...localSettings, pushEnabled: true, oneSignalPlayerId: playerId };
           setLocalSettings(updated);
           onUpdate(updated);
+          await wirePushToggle(true, showToast);
 
           syncUserSettingsToFirebase(playerId, updated, activeLocation || null)
             .catch(err => console.warn(err));
@@ -358,6 +510,7 @@ const SettingsScreen = ({
           const updated = { ...localSettings, pushEnabled: true };
           setLocalSettings(updated);
           onUpdate(updated);
+          await wirePushToggle(true, showToast);
         }
       } catch (err) {
         // Fallback toggling
@@ -365,33 +518,72 @@ const SettingsScreen = ({
         const updated = { ...localSettings, pushEnabled: true };
         setLocalSettings(updated);
         onUpdate(updated);
+        await wirePushToggle(true, showToast);
       }
     }
   };
 
+  const currentTiles = localSettings.enabledTiles || {
+    aqi: true,
+    uv: true,
+    humidity: true,
+    visibility: true,
+    precipitation: true,
+    wind: true
+  };
+
+  const handleToggleTile = (key: keyof Required<Settings>['enabledTiles']) => {
+    const updatedTiles = {
+      ...currentTiles,
+      [key]: !currentTiles[key]
+    };
+    updateSetting('enabledTiles', updatedTiles);
+  };
+
+  const subViews = {
+    agreement: {
+      title: "User Agreement",
+      content: "By using this Application, you acknowledge and agree that weather data is provided 'as is' for informational purposes only. Nimbus Labs does not guarantee the absolute accuracy, completeness, or timeliness of data due to the inherent nature of meteorological forecasting.\n\nYou agree not to use this Application for critical safety decisions, such as maritime navigation, aviation, or emergency management. Any reliance on the information provided is strictly at your own risk.\n\nWe reserve the right to modify services, features, or data providers without prior notice. Continuous service is not guaranteed during scheduled maintenance or upstream provider outages."
+    },
+    privacy: {
+      title: "Privacy Notice",
+      content: "We respect your digital privacy. This Application is designed to function with minimal data footprint. Your precise location data is processed locally to fetch hyper-local weather alerts and is never transmitted to our servers for storage or profiling.\n\nWe do not collect any data. Any analytical data is fully anonymized and used solely to improve application performance and stability.\n\nYour saved locations and settings are stored locally on your device via browser storage. We have no access to this data. For integrated services like Open-Meteo, please refer to their respective privacy documentation regarding IP-based data processing."
+    }
+  };
+
   useEffect(() => {
-    if (showAbout) {
+    if (showDataSources || showTilesCustomisation || activeSubView !== 'none') {
       const resetScroll = () => {
-        if (aboutScrollRef.current) {
-          aboutScrollRef.current.scrollTop = 0;
-          aboutScrollRef.current.scrollLeft = 0;
+        if (scrollRef.current) {
+          scrollRef.current.scrollTop = 0;
+          scrollRef.current.scrollLeft = 0;
         }
         window.scrollTo(0, 0);
         
-        // Direct DOM access as fallback/double-check
-        const aboutPage = document.getElementById("about-page");
-        if (aboutPage) {
-          aboutPage.scrollTop = 0;
-          aboutPage.scrollLeft = 0;
+        // Direct DOM access to ensure absolute top-alignment
+        const sourcesPage = document.getElementById("sources-page");
+        if (sourcesPage) {
+          sourcesPage.scrollTop = 0;
+          sourcesPage.scrollLeft = 0;
+        }
+        const tilesPage = document.getElementById("tiles-page");
+        if (tilesPage) {
+          tilesPage.scrollTop = 0;
+          tilesPage.scrollLeft = 0;
+        }
+        const subviewPage = document.getElementById("subview-page");
+        if (subviewPage) {
+          subviewPage.scrollTop = 0;
+          subviewPage.scrollLeft = 0;
         }
       };
 
-      // Execute across multiple frames and timeouts to fight browser scroll restoration
+      // Execute across multiple animation cycles to defeat browsers dynamic scroll restoration
       resetScroll();
       requestAnimationFrame(resetScroll);
       const t1 = setTimeout(resetScroll, 50);
-      const t2 = setTimeout(resetScroll, 150);
-      const t3 = setTimeout(resetScroll, 300);
+      const t2 = setTimeout(resetScroll, 120);
+      const t3 = setTimeout(resetScroll, 280);
       
       return () => {
         clearTimeout(t1);
@@ -399,13 +591,13 @@ const SettingsScreen = ({
         clearTimeout(t3);
       };
     }
-  }, [showAbout]);
+  }, [showDataSources, showTilesCustomisation, activeSubView]);
 
   // pushPanel and handleBack passed down from parent to maintain unified browser state
 
   useEffect(() => {
     const handleSwipeLeft = () => {
-      if (showAbout || activeSubView !== 'none') return;
+      if (showDataSources || showTilesCustomisation || activeSubView !== 'none') return;
       // Increase thresholds
       Haptic.medium(localSettings.hapticEnabled);
       const newRain = Math.min(100, localSettings.rainThreshold + 5);
@@ -416,7 +608,7 @@ const SettingsScreen = ({
     };
 
     const handleSwipeRight = () => {
-      if (showAbout || activeSubView !== 'none') return;
+      if (showDataSources || showTilesCustomisation || activeSubView !== 'none') return;
       // Decrease thresholds
       Haptic.medium(localSettings.hapticEnabled);
       const newRain = Math.max(0, localSettings.rainThreshold - 5);
@@ -432,13 +624,30 @@ const SettingsScreen = ({
       window.removeEventListener('swipe-left', handleSwipeLeft);
       window.removeEventListener('swipe-right', handleSwipeRight);
     };
-  }, [localSettings, showAbout, activeSubView, onUpdate]);
+  }, [localSettings, showDataSources, showTilesCustomisation, activeSubView, onUpdate]);
 
   const updateSetting = async <T extends keyof Settings>(key: T, value: Settings[T]) => {
     Haptic.light(localSettings.hapticEnabled);
     const newSettings = { ...localSettings, [key]: value };
     setLocalSettings(newSettings);
     onUpdate(newSettings);
+
+    // Synchronize setting change with local NotifSettings and real OneSignal Push actions
+    if (key === 'pushEnabled') {
+      await wirePushToggle(value as boolean, showToast);
+    } else if (key === 'alertMorningSummary') {
+      await wireMorningToggle(value as boolean, showToast);
+    } else if (key === 'alertNightSummary') {
+      await wireNightToggle(value as boolean, showToast);
+    } else if (key === 'alertRain') {
+      wireThresholdToggle('rain', value as boolean, showToast);
+    } else if (key === 'alertDaily') {
+      wireThresholdToggle('snow', value as boolean, showToast);
+    } else if (key === 'stormThreshold') {
+      wireThresholdToggle('storm', value as boolean, showToast);
+    } else if (key === 'alertSevere') {
+      wireThresholdToggle('severe', value as boolean, showToast);
+    }
 
     if (newSettings.pushEnabled && newSettings.oneSignalPlayerId) {
       // Run in background without awaiting to prevent UI freeze/lag
@@ -447,332 +656,484 @@ const SettingsScreen = ({
     }
   };
 
-  const SubView = ({ title, content, onClose }: { title: string; content: string; onClose: () => void }) => (
+  const SubView = ({ title, content, onClose }: { title: string; content: string; onClose: () => void; key?: string }) => (
     <motion.div 
-      initial={{ opacity: 0, scale: 0.98, y: 15 }}
-      animate={{ opacity: 1, scale: 1, y: 0 }}
-      exit={{ opacity: 0, scale: 0.98, y: 15 }}
+      key="settings-subview-panel"
+      ref={scrollRef}
+      id="subview-page"
+      initial={{ x: "100%", opacity: 0.9 }}
+      animate={{ x: 0, opacity: 1 }}
+      exit={{ x: "100%", opacity: 0.9 }}
       transition={{ 
         type: "spring",
-        stiffness: 400,
+        stiffness: 280,
         damping: 30
       }}
-      className="fixed inset-0 z-[100] bg-app-bg/95 backdrop-blur-2xl px-6 pt-[calc(env(safe-area-inset-top)+24px)] pb-20 overflow-y-auto gpu will-change-transform"
+      className="fixed inset-0 z-[130] bg-app-bg overflow-y-auto subview-page touch-pan-y"
     >
-      <div className="max-w-[390px] mx-auto min-h-full flex flex-col">
-        <header className="flex items-center justify-between mb-10">
-          <h2 className="text-2xl font-bold text-app-text">{title}</h2>
-          <button onClick={() => {
-            Haptic.light(localSettings.hapticEnabled);
-            onClose();
-          }} className="w-10 h-10 rounded-full bg-app-text/5 flex items-center justify-center text-app-text">
-            <Icons.X className="w-6 h-6" />
-          </button>
+      <div className="max-w-[390px] mx-auto min-h-screen px-6 pt-[calc(env(safe-area-inset-top)+24px)] pb-32">
+        <header className="flex items-center justify-between mb-8 px-1 h-10 w-full">
+          <h1 className="text-[28px] font-bold text-app-text tracking-tight">{title}</h1>
+          <motion.button 
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ type: "spring", stiffness: 380, damping: 30 }}
+            onClick={() => {
+              Haptic.light(localSettings.hapticEnabled);
+              onClose();
+            }} 
+            className="flex items-center gap-1.5 text-app-text-dim hover:text-white transition-colors cursor-pointer select-none bg-transparent border-none outline-none"
+          >
+            <span className="text-[15px] font-bold">BACK</span>
+            <Icons.ChevronRight className="w-5 h-5 text-app-text-dim" style={{ strokeWidth: 2.2 }} />
+          </motion.button>
         </header>
-        <div className="text-[15px] font-medium leading-relaxed text-app-text/80 space-y-6">
+        <div className="text-[15px] p-1 font-medium leading-relaxed text-app-text/80 space-y-6">
           {content.split('\n\n').map((p, i) => <p key={i}>{p}</p>)}
         </div>
       </div>
     </motion.div>
   );
 
-  if (activeSubView !== 'none') {
-    const views = {
-      agreement: {
-        title: "User Agreement",
-        content: "By using this Application, you acknowledge and agree that weather data is provided 'as is' for informational purposes only. Nimbus Labs does not guarantee the absolute accuracy, completeness, or timeliness of data due to the inherent nature of meteorological forecasting.\n\nYou agree not to use this Application for critical safety decisions, such as maritime navigation, aviation, or emergency management. Any reliance on the information provided is strictly at your own risk.\n\nWe reserve the right to modify services, features, or data providers without prior notice. Continuous service is not guaranteed during scheduled maintenance or upstream provider outages."
-      },
-      privacy: {
-        title: "Privacy Notice",
-        content: "We respect your digital privacy. This Application is designed to function with minimal data footprint. Your precise location data is processed locally to fetch hyper-local weather alerts and is never transmitted to our servers for storage or profiling.\n\nWe do not collect any data. Any analytical data is fully anonymized and used solely to improve application performance and stability.\n\nYour saved locations and settings are stored locally on your device via browser storage. We have no access to this data. For integrated services like Open-Meteo, please refer to their respective privacy documentation regarding IP-based data processing."
-      }
-    };
-    return <SubView title={views[activeSubView].title} content={views[activeSubView].content} onClose={() => handleBack()} />;
-  }
-
-  if (showAbout) {
-    return (
-      <motion.div 
-        ref={aboutScrollRef}
-        id="about-page"
-        initial={{ opacity: 0, x: 20 }}
-        animate={{ opacity: 1, x: 0 }}
-        exit={{ opacity: 0, x: 20 }}
-        className="fixed inset-0 z-[60] bg-app-bg overflow-y-auto about-page touch-pan-y"
-      >
-        <div className="max-w-[390px] mx-auto min-h-screen px-6 pt-[calc(env(safe-area-inset-top)+24px)] pb-32">
-          <header className="flex items-center mb-12 px-1 h-10">
-            <button 
-              onClick={() => {
-                Haptic.light(localSettings.hapticEnabled);
-                handleBack();
-              }}
-              className="flex items-center gap-1.5 text-app-text-dim hover:text-white transition-colors"
-            >
-              <Icons.ChevronLeft className="w-5 h-5 text-app-text-dim" style={{ strokeWidth: 2 }} />
-              <span className="text-[15px] font-bold">Settings</span>
-            </button>
-          </header>
-
-          <div className="flex flex-col items-center px-4">
-             <div className="flex flex-col items-center text-center mb-16 w-full">
-                <div className="flex items-center gap-5 mb-4">
-                   <LoopingWeatherIcon />
-                   <h1 className="text-[28px] xs:text-[32px] font-black tracking-[-0.04em] text-app-text uppercase whitespace-nowrap">
-                     Nimbus Weather
-                   </h1>
-                </div>
-                <div className="h-px w-12 bg-app-text/10" />
-             </div>
-             
-             <div className="bg-app-surface/40 backdrop-blur-md border border-app-border rounded-[24px] overflow-hidden w-full mb-16 shadow-sm">
-                <button 
+  return (
+    <div className="relative w-full h-full min-h-screen">
+      <AnimatePresence mode="sync">
+        <motion.div 
+          key="settings-main-panel"
+          ref={mainScrollRef}
+          initial={{ opacity: 0, y: 40, scale: 0.99 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          exit={{ opacity: 0, y: 40, scale: 0.99 }}
+          transition={{ 
+            type: "spring", 
+            damping: 28, 
+            stiffness: 350, 
+            mass: 0.8,
+            velocity: 2
+          }}
+          className={cn(
+            "fixed inset-0 z-[120] bg-app-bg overflow-y-auto gpu settings-panel touch-pan-y will-change-transform transition-all duration-300",
+            (activeSubView !== 'none' || showDataSources || showTilesCustomisation) 
+              ? "pointer-events-none opacity-0 select-none translate-x-[-15px]" 
+              : "pointer-events-auto opacity-100 translate-x-0"
+          )}
+          data-no-swipe
+        >
+            <div className="max-w-[390px] mx-auto min-h-screen px-6 pt-[calc(env(safe-area-inset-top)+24px)] pb-24">
+              <header className="flex items-center justify-between mb-8 h-10 w-full px-1">
+                <h1 className="text-[34px] font-bold text-app-text tracking-tight">Settings</h1>
+                <motion.button 
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ type: "spring", stiffness: 380, damping: 30 }}
                   onClick={() => {
                     Haptic.light(localSettings.hapticEnabled);
+                    onClose();
+                  }}
+                  className="flex items-center gap-1.5 text-app-text-dim hover:text-white transition-colors cursor-pointer select-none bg-transparent border-none outline-none"
+                >
+                  <span className="text-[15px] font-bold">BACK</span>
+                  <Icons.ChevronRight className="w-5 h-5 text-app-text-dim" style={{ strokeWidth: 2.2 }} />
+                </motion.button>
+              </header>
+
+              <Section title="Push alerts & summaries">
+                <ToggleRow 
+                  label="Enable push alerts" 
+                  description={
+                    pushStatus === 'registering' ? 'Requesting permission...' :
+                    pushStatus === 'synced' ? 'Active & Synced with Cloud' :
+                    pushStatus === 'denied' ? 'Permission Denied' :
+                    'Get native reports on your device'
+                  }
+                  value={localSettings.pushEnabled} 
+                  hapticEnabled={localSettings.hapticEnabled}
+                  onToggle={handlePushToggle} 
+                />
+                <AnimatePresence>
+                  {localSettings.pushEnabled && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+                      className="overflow-hidden bg-white/[0.01]"
+                    >
+                      <div className="divide-y divide-app-border">
+                        <ToggleRow 
+                          label="Morning weather summary" 
+                          description="Get today's dynamic weather report delivered in the morning"
+                          value={localSettings.alertMorningSummary} 
+                          hapticEnabled={localSettings.hapticEnabled}
+                          onToggle={() => updateSetting('alertMorningSummary', !localSettings.alertMorningSummary)} 
+                        />
+                        <ToggleRow 
+                          label="Night weather summary" 
+                          description="Get tomorrow's weather outlook delivered in the evening"
+                          value={localSettings.alertNightSummary} 
+                          hapticEnabled={localSettings.hapticEnabled}
+                          onToggle={() => updateSetting('alertNightSummary', !localSettings.alertNightSummary)} 
+                        />
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </Section>
+
+              <Section title="Threshold triggers">
+                <SliderRow 
+                  label="Rain threshold" 
+                  value={localSettings.alertRain} 
+                  currentValue={localSettings.rainThreshold}
+                  hapticEnabled={localSettings.hapticEnabled}
+                  onToggle={() => updateSetting('alertRain', !localSettings.alertRain)} 
+                  onValueChange={(val) => updateSetting('rainThreshold', val)}
+                />
+                <SliderRow 
+                  label="Snow threshold" 
+                  value={localSettings.alertDaily} 
+                  currentValue={localSettings.snowThreshold}
+                  hapticEnabled={localSettings.hapticEnabled}
+                  onToggle={() => updateSetting('alertDaily', !localSettings.alertDaily)} 
+                  onValueChange={(val) => updateSetting('snowThreshold', val)}
+                />
+                <ToggleRow 
+                  label="Thunderstorm alerts" 
+                  value={localSettings.stormThreshold} 
+                  hapticEnabled={localSettings.hapticEnabled}
+                  onToggle={() => updateSetting('stormThreshold', !localSettings.stormThreshold)} 
+                />
+                <ToggleRow 
+                  label="Severe weather alerts" 
+                  value={localSettings.alertSevere} 
+                  hapticEnabled={localSettings.hapticEnabled}
+                  onToggle={() => updateSetting('alertSevere', !localSettings.alertSevere)} 
+                />
+              </Section>
+
+              <Section title="Units">
+                <SelectRow 
+                  label="Temperature" 
+                  value={localSettings.unitTemp} 
+                  hapticEnabled={localSettings.hapticEnabled}
+                  options={[
+                    { label: '°C', value: 'C' },
+                    { label: '°F', value: 'F' }
+                  ]}
+                  onChange={(val) => updateSetting('unitTemp', val)}
+                />
+                <SelectRow 
+                  label="Wind" 
+                  value={localSettings.unitWind} 
+                  hapticEnabled={localSettings.hapticEnabled}
+                  options={[
+                    { label: 'km/h', value: 'km/h' },
+                    { label: 'mph', value: 'mph' },
+                    { label: 'm/s', value: 'm/s' }
+                  ]}
+                  onChange={(val) => updateSetting('unitWind', val)}
+                />
+                <SelectRow 
+                  label="Visibility" 
+                  value={localSettings.unitVisibility} 
+                  hapticEnabled={localSettings.hapticEnabled}
+                  options={[
+                    { label: 'km', value: 'km' },
+                    { label: 'mi', value: 'miles' }
+                  ]}
+                  onChange={(val) => updateSetting('unitVisibility', val)}
+                />
+                <SelectRow 
+                  label="Time Format" 
+                  value={localSettings.timeFormat === '24h' ? '24h' : '12h'} 
+                  hapticEnabled={localSettings.hapticEnabled}
+                  options={[
+                    { label: '12-hour', value: '12h' },
+                    { label: '24-hour', value: '24h' }
+                  ]}
+                  onChange={(val) => updateSetting('timeFormat', val)}
+                />
+              </Section>
+
+              <Section title="Icons & Atmosphere">
+                <div className="p-8 flex items-center justify-center gap-12 bg-white/[0.02]">
+                  <button 
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      Haptic.medium(localSettings.hapticEnabled);
+                      updateSetting('iconStyle', 'outline');
+                    }}
+                    className="flex flex-col items-center gap-4 transition-all duration-300 group touch-manipulation"
+                  >
+                    <div className={cn(
+                      "transition-all duration-500 ease-[0.22,1,0.36,1]",
+                      localSettings.iconStyle === 'outline' ? "scale-125 saturate-100" : "scale-100 saturate-0 opacity-40 group-hover:opacity-60"
+                    )}>
+                      <WeatherIcon name="Sun" style="outline" className="w-12 h-12" />
+                    </div>
+                    <p className={cn(
+                      "text-[10px] uppercase font-bold tracking-[0.2em] transition-colors",
+                      localSettings.iconStyle === 'outline' ? "text-white" : "text-white/20"
+                    )}>Outline</p>
+                  </button>
+                  
+                  <button 
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      Haptic.medium(localSettings.hapticEnabled);
+                      updateSetting('iconStyle', 'coloured');
+                    }}
+                    className="flex flex-col items-center gap-4 transition-all duration-300 group touch-manipulation"
+                  >
+                    <div className={cn(
+                      "transition-all duration-500 ease-[0.22,1,0.36,1]",
+                      localSettings.iconStyle === 'coloured' ? "scale-125 saturate-100" : "scale-100 saturate-0 opacity-40 group-hover:opacity-60"
+                    )}>
+                      <WeatherIcon name="Sun" style="coloured" className="w-12 h-12" />
+                    </div>
+                    <p className={cn(
+                      "text-[10px] uppercase font-bold tracking-[0.2em] transition-colors",
+                      localSettings.iconStyle === 'coloured' ? "text-white" : "text-white/20"
+                    )}>Coloured</p>
+                  </button>
+                </div>
+              </Section>
+
+              <Section title="General">
+                <ToggleRow 
+                  label="Haptic feedback" 
+                  description="Subtle vibrations for buttons and scrolling"
+                  value={localSettings.hapticEnabled} 
+                  hapticEnabled={localSettings.hapticEnabled}
+                  onToggle={() => updateSetting('hapticEnabled', !localSettings.hapticEnabled)} 
+                />
+                <LinkRow 
+                  label="Tiles Customisation" 
+                  hapticEnabled={localSettings.hapticEnabled}
+                  onClick={() => {
+                    setShowTilesCustomisation(true);
+                    pushPanel(() => setShowTilesCustomisation(false), 'tiles_customisation');
+                  }}
+                />
+              </Section>
+
+              <Section title="About">
+                <AboutRow 
+                  icon={Package} 
+                  title="App version" 
+                  subtitle="1.2.2" 
+                  hapticEnabled={localSettings.hapticEnabled}
+                />
+                <AboutRow 
+                  icon={Cloud} 
+                  title="Data sources" 
+                  subtitle="Weather, alerts and environmental data sources" 
+                  rightElement={<Icons.ChevronRight className="w-5 h-5 text-app-text-dim/30" />}
+                  onClick={() => {
+                    setShowDataSources(true);
+                    pushPanel(() => setShowDataSources(false), 'data_sources');
+                  }}
+                  hapticEnabled={localSettings.hapticEnabled}
+                />
+                <AboutRow 
+                  icon={FileText} 
+                  title="Terms of Service" 
+                  subtitle="Terms and conditions" 
+                  rightElement={<ArrowUpRight className="w-4.5 h-4.5 text-app-text-dim/40" />}
+                  onClick={() => {
                     setActiveSubView('agreement');
                     pushPanel(() => setActiveSubView('none'), 'agreement');
                   }}
-                  className="w-full px-6 py-5 flex items-center justify-between text-left active:bg-white/5 transition-colors border-b border-app-border/50"
-                >
-                   <span className="text-[16px] text-app-text font-medium">Weather User Agreement</span>
-                   <Icons.ChevronRight className="w-5 h-5 text-app-text-dim/30" />
-                </button>
-                <button 
+                  hapticEnabled={localSettings.hapticEnabled}
+                />
+                <AboutRow 
+                  icon={Shield} 
+                  title="Privacy" 
+                  subtitle="Privacy policy & data practices" 
+                  rightElement={<ArrowUpRight className="w-4.5 h-4.5 text-app-text-dim/40" />}
                   onClick={() => {
-                    Haptic.light(localSettings.hapticEnabled);
                     setActiveSubView('privacy');
                     pushPanel(() => setActiveSubView('none'), 'privacy');
                   }}
-                  className="w-full px-6 py-5 flex items-center justify-between text-left active:bg-white/5 transition-colors"
+                  hapticEnabled={localSettings.hapticEnabled}
+                />
+              </Section>
+
+              {/* Footer */}
+              <div className="flex flex-col items-center justify-center pt-8 pb-4 text-center w-full">
+                <p className="text-[12px] font-semibold text-app-text-dim opacity-40 tracking-tight">&copy; 2026 Nimbus Black</p>
+              </div>
+            </div>
+          </motion.div>
+
+        {showDataSources && (
+          <motion.div 
+            key="settings-data-sources-panel"
+            ref={scrollRef}
+            id="sources-page"
+            initial={{ x: "100%", opacity: 0.9 }}
+            animate={{ x: 0, opacity: 1 }}
+            exit={{ x: "100%", opacity: 0.9 }}
+            transition={{ type: "spring", damping: 30, stiffness: 280 }}
+            className="fixed inset-0 z-[125] bg-app-bg overflow-y-auto sources-page touch-pan-y"
+          >
+            <div className="max-w-[390px] mx-auto min-h-screen px-6 pt-[calc(env(safe-area-inset-top)+24px)] pb-32">
+              <header className="flex items-center justify-between mb-8 px-1 h-10 w-full">
+                <h1 className="text-[28px] font-bold text-app-text tracking-tight">Data Sources</h1>
+                <motion.button 
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ type: "spring", stiffness: 380, damping: 30 }}
+                  onClick={() => {
+                    Haptic.light(localSettings.hapticEnabled);
+                    setShowDataSources(false);
+                    handleBack();
+                  }}
+                  className="flex items-center gap-1.5 text-app-text-dim hover:text-white transition-colors cursor-pointer select-none bg-transparent border-none outline-none"
                 >
-                   <span className="text-[16px] text-app-text font-medium">Weather Privacy Notice</span>
-                   <Icons.ChevronRight className="w-5 h-5 text-app-text-dim/30" />
-                </button>
-             </div>
+                  <span className="text-[15px] font-bold">BACK</span>
+                  <Icons.ChevronRight className="w-5 h-5 text-app-text-dim" style={{ strokeWidth: 2.2 }} />
+                </motion.button>
+              </header>
 
-             <div className="w-full mb-20">
-                <p className="text-[14px] font-black text-app-text/40 uppercase tracking-[0.25em] mb-10 text-center">Powered by</p>
-                <div className="flex flex-wrap justify-center gap-4">
-                   <PoweredByPill label="Open-Meteo" icon="🌤️" />
-                   <PoweredByPill label="WAQI" icon="💨" />
-                   <PoweredByPill label="Leaflet" icon="🗺️" />
-                   <PoweredByPill label="Geolocation API" icon="📍" />
-                </div>
-             </div>
-
-             <div className="flex flex-col items-center gap-1 text-center">
-                <p className="text-[11px] font-bold text-app-text uppercase tracking-[0.15em] opacity-30">Built with precision</p>
-                <p className="text-[11px] font-bold text-app-text opacity-30">&copy; 2026 Nimbus Weather</p>
-                <div className="h-10" />
-                <p className="text-[12px] font-black text-app-text/40 opacity-50 tracking-widest uppercase">Version 1.0.0</p>
-             </div>
-          </div>
-        </div>
-      </motion.div>
-    );
-  }
-
-  return (
-    <motion.div 
-      initial={{ opacity: 0, y: 40, scale: 0.99 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      exit={{ opacity: 0, y: 40, scale: 0.99 }}
-      transition={{ 
-        type: "spring", 
-        damping: 28, 
-        stiffness: 350, 
-        mass: 0.8,
-        velocity: 2
-      }}
-      className="fixed inset-0 z-50 bg-app-bg overflow-y-auto gpu settings-panel touch-pan-y will-change-transform"
-      data-no-swipe
-    >
-      <div className="max-w-[390px] mx-auto min-h-screen px-6 pt-[calc(env(safe-area-inset-top)+112px)] pb-24">
-        <h1 className="text-[34px] font-bold text-app-text mb-8 tracking-tight px-1">Settings</h1>
-
-        <Section title="Push alerts & summaries">
-          <ToggleRow 
-            label="Enable push alerts" 
-            description={
-              pushStatus === 'registering' ? 'Requesting permission...' :
-              pushStatus === 'synced' ? 'Active & Synced with Cloud' :
-              pushStatus === 'denied' ? 'Permission Denied' :
-              'Get native reports on your device'
-            }
-            value={localSettings.pushEnabled} 
-            hapticEnabled={localSettings.hapticEnabled}
-            onToggle={handlePushToggle} 
-          />
-          <AnimatePresence>
-            {localSettings.pushEnabled && (
-              <motion.div
-                initial={{ height: 0, opacity: 0 }}
-                animate={{ height: 'auto', opacity: 1 }}
-                exit={{ height: 0, opacity: 0 }}
-                transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-                className="overflow-hidden bg-white/[0.01]"
-              >
-                <div className="divide-y divide-app-border">
-                  <ToggleRow 
-                    label="Morning weather summary" 
-                    description="Get today's dynamic weather report delivered in the morning"
-                    value={localSettings.alertMorningSummary} 
-                    hapticEnabled={localSettings.hapticEnabled}
-                    onToggle={() => updateSetting('alertMorningSummary', !localSettings.alertMorningSummary)} 
-                  />
-                  <ToggleRow 
-                    label="Night weather summary" 
-                    description="Get tomorrow's weather outlook delivered in the evening"
-                    value={localSettings.alertNightSummary} 
-                    hapticEnabled={localSettings.hapticEnabled}
-                    onToggle={() => updateSetting('alertNightSummary', !localSettings.alertNightSummary)} 
-                  />
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </Section>
-
-        <Section title="Threshold triggers">
-          <SliderRow 
-            label="Rain threshold" 
-            value={localSettings.alertRain} 
-            currentValue={localSettings.rainThreshold}
-            hapticEnabled={localSettings.hapticEnabled}
-            onToggle={() => updateSetting('alertRain', !localSettings.alertRain)} 
-            onValueChange={(val) => updateSetting('rainThreshold', val)}
-          />
-          <SliderRow 
-            label="Snow threshold" 
-            value={localSettings.alertDaily} 
-            currentValue={localSettings.snowThreshold}
-            hapticEnabled={localSettings.hapticEnabled}
-            onToggle={() => updateSetting('alertDaily', !localSettings.alertDaily)} 
-            onValueChange={(val) => updateSetting('snowThreshold', val)}
-          />
-          <ToggleRow 
-            label="Thunderstorm alerts" 
-            value={localSettings.stormThreshold} 
-            hapticEnabled={localSettings.hapticEnabled}
-            onToggle={() => updateSetting('stormThreshold', !localSettings.stormThreshold)} 
-          />
-          <ToggleRow 
-            label="Severe weather alerts" 
-            value={localSettings.alertSevere} 
-            hapticEnabled={localSettings.hapticEnabled}
-            onToggle={() => updateSetting('alertSevere', !localSettings.alertSevere)} 
-          />
-        </Section>
-
-        <Section title="Units">
-          <SelectRow 
-            label="Temperature" 
-            value={localSettings.unitTemp} 
-            hapticEnabled={localSettings.hapticEnabled}
-            options={[
-              { label: '°C', value: 'C' },
-              { label: '°F', value: 'F' }
-            ]}
-            onChange={(val) => updateSetting('unitTemp', val)}
-          />
-          <SelectRow 
-            label="Wind" 
-            value={localSettings.unitWind} 
-            hapticEnabled={localSettings.hapticEnabled}
-            options={[
-              { label: 'km/h', value: 'km/h' },
-              { label: 'mph', value: 'mph' },
-              { label: 'm/s', value: 'm/s' }
-            ]}
-            onChange={(val) => updateSetting('unitWind', val)}
-          />
-          <SelectRow 
-            label="Visibility" 
-            value={localSettings.unitVisibility} 
-            hapticEnabled={localSettings.hapticEnabled}
-            options={[
-              { label: 'km', value: 'km' },
-              { label: 'mi', value: 'miles' }
-            ]}
-            onChange={(val) => updateSetting('unitVisibility', val)}
-          />
-          <SelectRow 
-            label="Time Format" 
-            value={localSettings.timeFormat === '24h' ? '24h' : '12h'} 
-            hapticEnabled={localSettings.hapticEnabled}
-            options={[
-              { label: '12-hour', value: '12h' },
-              { label: '24-hour', value: '24h' }
-            ]}
-            onChange={(val) => updateSetting('timeFormat', val)}
-          />
-        </Section>
-
-        <Section title="Icons & Atmosphere">
-          <div className="p-8 flex items-center justify-center gap-12 bg-white/[0.02]">
-            <button 
-              type="button"
-              onClick={(e) => {
-                e.preventDefault();
-                Haptic.medium(localSettings.hapticEnabled);
-                updateSetting('iconStyle', 'outline');
-              }}
-              className="flex flex-col items-center gap-4 transition-all duration-300 group touch-manipulation"
-            >
-              <div className={cn(
-                "transition-all duration-500 ease-[0.22,1,0.36,1]",
-                localSettings.iconStyle === 'outline' ? "scale-125 saturate-100" : "scale-100 saturate-0 opacity-40 group-hover:opacity-60"
-              )}>
-                <WeatherIcon name="Sun" style="outline" className="w-12 h-12" />
+              <div className="flex flex-col items-center px-0 w-full">
+                 <div className="w-full mb-10">
+                    <SourceCard 
+                      title="Open-Meteo" 
+                      subtitle="High-resolution global weather forecasts, hourly UV Index modeling, and local temperature projections." 
+                      url="https://open-meteo.com/" 
+                      hapticEnabled={localSettings.hapticEnabled} 
+                    />
+                    <SourceCard 
+                      title="WAQI (AQI)" 
+                      subtitle="Real-time, hyper-local PM2.5, PM10, and ozone monitoring from official stations globally." 
+                      url="https://waqi.info/" 
+                      hapticEnabled={localSettings.hapticEnabled} 
+                    />
+                    <SourceCard 
+                      title="Windy.com" 
+                      subtitle="Interactive composite weather radar mapping tiles, wind vectors, and meteorological modeling visualizations." 
+                      url="https://www.windy.com/" 
+                      hapticEnabled={localSettings.hapticEnabled} 
+                    />
+                    <SourceCard 
+                      title="OpenStreetMap" 
+                      subtitle="Precise device reverse coordinate translation to match human-readable city labels." 
+                      url="https://www.openstreetmap.org/" 
+                      hapticEnabled={localSettings.hapticEnabled} 
+                    />
+                 </div>
               </div>
-              <p className={cn(
-                "text-[10px] uppercase font-bold tracking-[0.2em] transition-colors",
-                localSettings.iconStyle === 'outline' ? "text-white" : "text-white/20"
-              )}>Outline</p>
-            </button>
-            
-            <button 
-              type="button"
-              onClick={(e) => {
-                e.preventDefault();
-                Haptic.medium(localSettings.hapticEnabled);
-                updateSetting('iconStyle', 'coloured');
-              }}
-              className="flex flex-col items-center gap-4 transition-all duration-300 group touch-manipulation"
-            >
-              <div className={cn(
-                "transition-all duration-500 ease-[0.22,1,0.36,1]",
-                localSettings.iconStyle === 'coloured' ? "scale-125 saturate-100" : "scale-100 saturate-0 opacity-40 group-hover:opacity-60"
-              )}>
-                <WeatherIcon name="Sun" style="coloured" className="w-12 h-12" />
+              
+              {/* Footer */}
+              <div className="flex flex-col items-center justify-center pt-8 pb-4 text-center w-full">
+                <p className="text-[12px] font-semibold text-app-text-dim opacity-40 tracking-tight">&copy; 2026 Nimbus Black</p>
               </div>
-              <p className={cn(
-                "text-[10px] uppercase font-bold tracking-[0.2em] transition-colors",
-                localSettings.iconStyle === 'coloured' ? "text-white" : "text-white/20"
-              )}>Coloured</p>
-            </button>
-          </div>
-        </Section>
+            </div>
+          </motion.div>
+        )}
 
-        <Section title="General">
-          <ToggleRow 
-            label="Haptic feedback" 
-            description="Subtle vibrations for buttons and scrolling"
-            value={localSettings.hapticEnabled} 
-            hapticEnabled={localSettings.hapticEnabled}
-            onToggle={() => updateSetting('hapticEnabled', !localSettings.hapticEnabled)} 
+        {showTilesCustomisation && (
+          <motion.div 
+            key="settings-tiles-customisation-panel"
+            ref={scrollRef}
+            id="tiles-page"
+            initial={{ x: "100%", opacity: 0.9 }}
+            animate={{ x: 0, opacity: 1 }}
+            exit={{ x: "100%", opacity: 0.9 }}
+            transition={{ type: "spring", damping: 30, stiffness: 280 }}
+            className="fixed inset-0 z-[125] bg-app-bg overflow-y-auto tiles-page touch-pan-y"
+          >
+            <div className="max-w-[390px] mx-auto min-h-screen px-6 pt-[calc(env(safe-area-inset-top)+24px)] pb-32">
+              <header className="flex items-center justify-between mb-12 px-1 h-10 w-full">
+                <h1 className="text-[28px] font-bold text-app-text tracking-tight">Tiles</h1>
+                <motion.button 
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ type: "spring", stiffness: 380, damping: 30 }}
+                  onClick={() => {
+                    Haptic.light(localSettings.hapticEnabled);
+                    handleBack();
+                  }}
+                  className="flex items-center gap-1.5 text-app-text-dim hover:text-white transition-colors cursor-pointer select-none bg-transparent border-none outline-none"
+                >
+                  <Icons.ChevronLeft className="w-5 h-5 text-app-text-dim" style={{ strokeWidth: 2 }} />
+                  <span className="text-[15px] font-bold">BACK</span>
+                </motion.button>
+              </header>
+
+              <Section title="Active Weather Cards">
+                <ToggleRow 
+                  label="Air Quality (AQI)" 
+                  description="Air Quality Index & station details"
+                  value={!!currentTiles.aqi} 
+                  hapticEnabled={localSettings.hapticEnabled}
+                  onToggle={() => handleToggleTile('aqi')} 
+                />
+                <ToggleRow 
+                  label="UV Index" 
+                  description="Solar radiation and exposure levels"
+                  value={!!currentTiles.uv} 
+                  hapticEnabled={localSettings.hapticEnabled}
+                  onToggle={() => handleToggleTile('uv')} 
+                />
+                <ToggleRow 
+                  label="Humidity" 
+                  description="Relative humidity percentage"
+                  value={!!currentTiles.humidity} 
+                  hapticEnabled={localSettings.hapticEnabled}
+                  onToggle={() => handleToggleTile('humidity')} 
+                />
+                <ToggleRow 
+                  label="Visibility" 
+                  description="Horizontal visibility distance"
+                  value={!!currentTiles.visibility} 
+                  hapticEnabled={localSettings.hapticEnabled}
+                  onToggle={() => handleToggleTile('visibility')} 
+                />
+                <ToggleRow 
+                  label="Precipitation" 
+                  description="Expected rain/snow accumulation"
+                  value={!!currentTiles.precipitation} 
+                  hapticEnabled={localSettings.hapticEnabled}
+                  onToggle={() => handleToggleTile('precipitation')} 
+                />
+                <ToggleRow 
+                  label="Wind Speed" 
+                  description="Wind speed and direction details"
+                  value={!!currentTiles.wind} 
+                  hapticEnabled={localSettings.hapticEnabled}
+                  onToggle={() => handleToggleTile('wind')} 
+                />
+              </Section>
+            </div>
+          </motion.div>
+        )}
+
+        {activeSubView !== 'none' && (
+          <SubView 
+            key="settings-subview"
+            title={subViews[activeSubView].title} 
+            content={subViews[activeSubView].content} 
+            onClose={() => handleBack()} 
           />
-          <LinkRow 
-            label="About Weather" 
-            hapticEnabled={localSettings.hapticEnabled}
-            onClick={() => {
-              setShowAbout(true);
-              pushPanel(() => setShowAbout(false), 'about');
-            }}
-          />
-        </Section>
-      </div>
-    </motion.div>
+        )}
+
+        {/* Floating Toast notification */}
+        {toastMessage && (
+          <motion.div 
+            initial={{ opacity: 0, y: 20, x: "-50%" }}
+            animate={{ opacity: 1, y: 0, x: "-50%" }}
+            exit={{ opacity: 0, y: 20, x: "-50%" }}
+            className="fixed bottom-12 left-1/2 z-[200] px-5 py-3 bg-[#1e293b]/95 border border-white/10 text-white rounded-2xl text-[13px] font-semibold shadow-2xl pointer-events-none select-none text-center"
+          >
+            {toastMessage}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
   );
 };
 

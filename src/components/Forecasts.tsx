@@ -311,13 +311,13 @@ export function DailyForecast({ weather, settings }: ForecastProps) {
         <span className="text-[11px] font-bold tracking-[0.08em] uppercase text-app-text-dim">7-Day Forecast</span>
         <Icons.ChevronRight className="w-4 h-4 text-app-text-dim/50" />
       </div>
-      <div className={cn("flex flex-col gap-1 p-2 gpu", "bg-app-surface backdrop-blur-2xl border border-app-border rounded-[32px]")}>
+      <div className={cn("flex flex-col gap-1 p-2", "bg-app-surface backdrop-blur-2xl border border-app-border rounded-[32px]")}>
         {(weather?.daily?.time || []).map((time, i) => {
           const info = getWeatherInfo(weather.daily.weatherCode?.[i] ?? 0);
           const date = parseISO(time);
           
           return (
-            <div key={i} className="flex items-center justify-between px-3 py-4 last:border-none">
+            <div key={time} className="flex items-center justify-between px-3 py-4 last:border-none">
               <span className="text-[15px] font-medium w-24 text-app-text">
                 {i === 0 ? 'Today' : (isNaN(date.getTime()) ? '---' : format(date, 'EEEE'))}
               </span>

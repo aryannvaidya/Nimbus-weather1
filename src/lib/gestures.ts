@@ -70,7 +70,7 @@ export function initGestures() {
     }
 
     // Handle pull indicator with requestAnimationFrame
-    if (axis === "v" && dy > 0 && window.scrollY === 0) {
+    if (axis === "v" && dy > 0 && window.scrollY <= 5) {
       if (rafId) cancelAnimationFrame(rafId);
       rafId = requestAnimationFrame(() => {
         const pull = Math.min(dy, 130);
@@ -110,7 +110,7 @@ export function initGestures() {
 
     } else if (axis === "v") {
       // PULL TO REFRESH
-      if (dy >= PULL_THRESHOLD && window.scrollY === 0) {
+      if (dy >= PULL_THRESHOLD && window.scrollY <= 5) {
         window.dispatchEvent(new CustomEvent("pull-refresh"));
       }
     }

@@ -16,11 +16,32 @@ type RadarLayer = 'temp' | 'rain' | 'clouds' | 'wind';
 export default function WeatherRadarMap({ activeLocation, onClose, hapticEnabled }: WeatherRadarMapProps) {
   const [activeLayer, setActiveLayer] = useState<RadarLayer>('rain');
   const [iframeLoading, setIframeLoading] = useState(true);
+  const [isOffline, setIsOffline] = useState(!navigator.onLine);
 
-  // Re-trigger loading state when layer or city coordinates change
   useEffect(() => {
+    const handleOnline = () => setIsOffline(false);
+    const handleOffline = () => setIsOffline(true);
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  // Re-trigger loading state when layer or city coordinates change with safety timeout fallback
+  useEffect(() => {
+    if (isOffline) return;
     setIframeLoading(true);
-  }, [activeLayer, activeLocation.latitude, activeLocation.longitude]);
+    
+    const fallbackTimer = setTimeout(() => {
+      setIframeLoading(false);
+    }, 2500);
+
+    return () => clearTimeout(fallbackTimer);
+  }, [activeLayer, activeLocation.latitude, activeLocation.longitude, isOffline]);
 
   const layers: { id: RadarLayer; label: string; icon: keyof typeof Icons; desc: string }[] = [
     { 
@@ -85,17 +106,20 @@ export default function WeatherRadarMap({ activeLocation, onClose, hapticEnabled
             </h1>
           </div>
 
-          <button 
+          <motion.button 
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ type: "spring", stiffness: 380, damping: 30 }}
             type="button"
             onClick={() => {
               Haptic.medium(hapticEnabled);
               onClose();
             }}
-            className="w-12 h-12 bg-app-text/5 border border-app-border rounded-full flex items-center justify-center text-app-text shadow-xl hover:bg-app-text/10 active:scale-95 transition-all"
+            className="flex items-center justify-center bg-white/10 hover:bg-white/20 text-white border border-white/10 rounded-full w-10 h-10 transition-colors cursor-pointer select-none mt-1"
             aria-label="Back"
           >
-            <Icons.ChevronLeft className="w-5 h-5 text-app-text" strokeWidth={2.5} />
-          </button>
+            <Icons.ChevronLeft className="w-5.5 h-5.5 text-app-text" strokeWidth={2.5} />
+          </motion.button>
         </div>
 
         {/* INTERACTIVE CONTROLS */}
@@ -113,23 +137,15 @@ export default function WeatherRadarMap({ activeLocation, onClose, hapticEnabled
                   }
                 }}
                 className={cn(
-                  "flex-1 py-2.5 flex flex-col items-center justify-center gap-1.5 text-[10px] font-bold rounded-[14px] transition-colors duration-200 relative z-10",
+                  "flex-1 py-2.5 flex flex-col items-center justify-center gap-1.5 text-[10px] font-bold rounded-[14px] relative z-10",
                   isSelected ? "text-black" : "text-app-text-dim hover:text-app-text/70"
                 )}
               >
                 <IconComponent className={cn("w-4 h-4", isSelected ? "text-black" : "text-app-text-dim")} />
                 <span>{layer.label}</span>
                 {isSelected && (
-                  <motion.div
-                    layoutId="radar-active-indicator"
-                    className="absolute inset-0 bg-white rounded-[14px] -z-10 shadow-md will-change-transform"
-                    transition={{ 
-                      type: "spring", 
-                      bounce: 0.1, 
-                      duration: 0.3,
-                      stiffness: 420,
-                      damping: 32
-                    }}
+                  <div
+                    className="absolute inset-0 bg-white rounded-[14px] -z-10 shadow-md"
                   />
                 )}
               </button>
@@ -138,37 +154,52 @@ export default function WeatherRadarMap({ activeLocation, onClose, hapticEnabled
         </div>
 
         {/* MAP PANEL */}
-        <div className="flex-1 relative rounded-[28px] overflow-hidden border border-app-border bg-black/40 shadow-2xl group justify-center items-center">
+        <div className="flex-1 relative rounded-[28px] overflow-hidden border border-app-border bg-black/40 shadow-2xl group flex flex-col justify-center items-center">
           
-          {/* Live Embed Iframe */}
-          <iframe
-            id="radar-iframe"
-            src={embedUrl}
-            className="w-full h-full border-0 rounded-[28px] select-all relative z-10"
-            allowFullScreen
-            onLoad={() => setIframeLoading(false)}
-          />
+          {isOffline ? (
+            <div className="absolute inset-0 flex flex-col items-center justify-center p-8 text-center bg-black/80 z-20 gap-4">
+              <div className="w-16 h-16 rounded-full bg-white/5 border border-white/10 flex items-center justify-center mb-2">
+                <Icons.CloudOff className="w-8 h-8 text-app-text-dim" strokeWidth={1.5} />
+              </div>
+              <p className="text-[12px] font-black text-white uppercase tracking-[0.15em] leading-none">
+                NO NETWORK CONNECTION
+              </p>
+              <p className="text-[14px] text-app-text-dim max-w-[280px] leading-relaxed mt-1">
+                Connect to the internet to view real-time meteorological radar simulations.
+              </p>
+            </div>
+          ) : (
+            <>
+              {/* Live Embed Iframe */}
+              <iframe
+                id="radar-iframe"
+                src={embedUrl}
+                className="w-full h-full border-0 rounded-[28px] select-all relative z-10"
+                allowFullScreen
+                onLoad={() => setIframeLoading(false)}
+              />
 
-          {/* Loading Layer */}
-          <AnimatePresence>
-            {iframeLoading && (
-              <motion.div 
-                initial={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.3 }}
-                className="absolute inset-0 flex flex-col items-center justify-center bg-black/85 z-20 gap-4"
-              >
-                <div className="relative flex items-center justify-center">
-                  <div className="w-12 h-12 border-2 border-indigo-500/10 rounded-full border-t-2 border-t-indigo-500 animate-spin" />
-                  <Icons.Map className="w-5 h-5 text-indigo-400 absolute animate-pulse" />
-                </div>
-                <div className="flex flex-col items-center text-center gap-1">
-                  <p className="text-xs font-bold uppercase tracking-widest text-[#a5cbfb]">Loading Live Radar</p>
-                  <p className="text-[10px] font-mono text-app-text-dim">Connecting to satellite sensors...</p>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
+              {/* Loading Layer */}
+              <AnimatePresence>
+                {iframeLoading && (
+                  <motion.div 
+                    initial={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.3 }}
+                    className="absolute inset-0 flex flex-col items-center justify-center bg-black/85 z-20 gap-4"
+                  >
+                    <div className="relative flex items-center justify-center">
+                      <div className="w-12 h-12 border-2 border-indigo-500/10 rounded-full border-t-2 border-t-indigo-500 animate-spin" />
+                      <Icons.Map className="w-5 h-5 text-indigo-400 absolute animate-pulse" />
+                    </div>
+                    <div className="flex flex-col items-center text-center gap-1">
+                      <p className="text-xs font-bold uppercase tracking-widest text-[#a5cbfb]">Loading Live Radar</p>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </>
+          )}
         </div>
 
       </div>

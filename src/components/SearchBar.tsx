@@ -19,6 +19,7 @@ export default function SearchBar({ onSelect, onClose, hapticEnabled }: SearchBa
   const [rawResults, setRawResults] = useState<Location[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [geoError, setGeoError] = useState<string | null>(null);
+  const [isLocationDenied, setIsLocationDenied] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -26,6 +27,23 @@ export default function SearchBar({ onSelect, onClose, hapticEnabled }: SearchBa
     if (inputRef.current) {
       inputRef.current.focus();
     }
+  }, []);
+
+  useEffect(() => {
+    const checkPermission = async () => {
+      try {
+        if (navigator.permissions) {
+          const result = await navigator.permissions.query({ name: "geolocation" as PermissionName });
+          setIsLocationDenied(result.state === 'denied');
+          result.onchange = () => {
+            setIsLocationDenied(result.state === 'denied');
+          };
+        }
+      } catch (e) {
+        console.warn("Error checking geolocation permission in SearchBar:", e);
+      }
+    };
+    checkPermission();
   }, []);
 
   // Fuse instance for client-side fuzzy refinement
@@ -120,6 +138,22 @@ export default function SearchBar({ onSelect, onClose, hapticEnabled }: SearchBa
         </header>
 
         <div className="flex-1 overflow-y-auto no-scrollbar pb-12">
+          {isLocationDenied && (
+            <motion.div 
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="p-4 bg-white/[0.04] border border-white/[0.08] rounded-2xl mb-6 flex gap-3 items-start select-none"
+            >
+              <span className="text-[18px]">📍</span>
+              <div className="flex flex-col">
+                <p className="text-[13px] font-semibold text-white tracking-tight">Location access off</p>
+                <p className="text-[12px] text-white/45 leading-relaxed mt-0.5">
+                  Turn on location in browser settings to get local weather
+                </p>
+              </div>
+            </motion.div>
+          )}
+
           {isLoading ? (
             <div className="py-12 flex flex-col items-center gap-3">
               <div className="w-8 h-8 border-2 border-app-border border-t-app-text rounded-full animate-spin" />

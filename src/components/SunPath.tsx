@@ -19,6 +19,40 @@ const endX = 290;
 const centerX = (startX + endX) / 2;
 const daylightControlY = horizonY - (2 * curveHeight);
 
+const MoonriseIcon = ({ className }: { className?: string }) => (
+  <svg 
+    viewBox="0 0 24 24" 
+    fill="none" 
+    stroke="currentColor" 
+    strokeWidth="1.8" 
+    strokeLinecap="round" 
+    strokeLinejoin="round" 
+    className={cn("text-blue-300", className)}
+  >
+    <path d="M2 21h20" />
+    <path d="M10 7a5 5 0 0 0 5 5 5 5 0 1 1-5-5Z" />
+    <path d="M18 12V4" />
+    <path d="m15 7 3-3 3 3" />
+  </svg>
+);
+
+const MoonsetIcon = ({ className }: { className?: string }) => (
+  <svg 
+    viewBox="0 0 24 24" 
+    fill="none" 
+    stroke="currentColor" 
+    strokeWidth="1.8" 
+    strokeLinecap="round" 
+    strokeLinejoin="round" 
+    className={cn("text-blue-300", className)}
+  >
+    <path d="M2 21h20" />
+    <path d="M10 7a5 5 0 0 0 5 5 5 5 0 1 1-5-5Z" />
+    <path d="M18 4v8" />
+    <path d="m15 9 3 3 3-3" />
+  </svg>
+);
+
 export default function SunPath({ weather, settings }: SunPathProps) {
   const containerRef = React.useRef<HTMLDivElement>(null);
   const isInView = useInView(containerRef, { once: false, amount: 0.1 });
@@ -304,13 +338,19 @@ export default function SunPath({ weather, settings }: SunPathProps) {
           </g>
 
           {/* Labels */}
-          <text x={startX - 15} y={horizonY + 45} textAnchor="end" className="fill-app-text font-bold text-[11px] tracking-tight">
-            {cycleLabelStart}
-          </text>
+          <foreignObject x="0" y={horizonY + 30} width="85" height="24">
+            <div className="flex items-center justify-end gap-1.5 text-app-text font-bold text-[11px] tracking-tight h-full select-none">
+              <span>{cycleLabelStart}</span>
+              {cycleStartName === 'Moonrise' && <MoonriseIcon className="w-3.5 h-3.5" />}
+            </div>
+          </foreignObject>
 
-          <text x={endX + 15} y={horizonY + 45} textAnchor="start" className="fill-app-text font-bold text-[11px] tracking-tight">
-            {cycleLabelEnd}
-          </text>
+          <foreignObject x={endX - 25} y={horizonY + 30} width="85" height="24">
+            <div className="flex items-center justify-start gap-1.5 text-app-text font-bold text-[11px] tracking-tight h-full select-none">
+              {cycleEndName === 'Moonset' && <MoonsetIcon className="w-3.5 h-3.5" />}
+              <span>{cycleLabelEnd}</span>
+            </div>
+          </foreignObject>
         </svg>
       </div>
     </div>

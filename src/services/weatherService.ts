@@ -40,13 +40,132 @@ export const fetchWithTimeout = async (url: string, options: any = {}, timeout =
 };
 
 const safeFetch = async (url: string) => {
+  if (typeof window !== "undefined") {
+    let proxyUrl = "";
+    if (url.startsWith("https://api.open-meteo.com")) {
+      proxyUrl = url.replace("https://api.open-meteo.com", "/api/weather-proxy");
+    } else if (url.startsWith("https://geocoding-api.open-meteo.com")) {
+      proxyUrl = url.replace("https://geocoding-api.open-meteo.com", "/api/geocoding-proxy");
+    } else if (url.startsWith("https://air-quality-api.open-meteo.com")) {
+      proxyUrl = url.replace("https://air-quality-api.open-meteo.com", "/api/air-quality-proxy");
+    }
+
+    if (proxyUrl) {
+      try {
+        console.log(`[Proxy] Fetching via server: ${proxyUrl}`);
+        const response = await fetchWithTimeout(proxyUrl, {}, 8000, 1);
+        if (response.ok) {
+          const data = await response.json();
+          if (data && !data.error) {
+            return data;
+          }
+        }
+        console.warn(`[Proxy] Status ${response.status} or error in body. Falling back to direct URL.`);
+      } catch (err) {
+        console.warn(`[Proxy] Fetch failed for ${proxyUrl}. Falling back to direct URL.`, err);
+      }
+    }
+  }
+
+  // Fallback to direct client-side fetch (or default if server proxy is disabled/unresponsive)
   try {
-    const response = await fetchWithTimeout(url, {}, 8000, 1);
-    if (!response.ok) return null;
+    console.log(`[Direct] Fetching: ${url}`);
+    const response = await fetchWithTimeout(url, {}, 12000, 2);
+    if (!response.ok) {
+      console.warn(`[Direct] Failed with status ${response.status} for ${url}`);
+      return null;
+    }
     return await response.json();
   } catch (err) {
-    console.warn("safeFetch failed for", url, err);
+    console.error("[Direct] Failed completely for", url, err);
     return null;
+  }
+};
+
+export function parseTimeToAbsoluteDate(timeStr: string, timeZone: string): Date {
+  if (!timeStr) return new Date();
+  
+  if (timeStr.includes('Z') || /[-+]\d{2}(:?\d{2})?$/.test(timeStr)) {
+    return new Date(timeStr);
+  }
+  
+  const match = timeStr.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?/);
+  if (!match) {
+    return new Date(timeStr);
+  }
+  
+  const trgYear = parseInt(match[1]);
+  const trgMonth = parseInt(match[2]);
+  const trgDay = parseInt(match[3]);
+  const trgHour = parseInt(match[4]);
+  const trgMin = parseInt(match[5]);
+  const trgSec = match[6] ? parseInt(match[6]) : 0;
+  
+  let guessMs = Date.UTC(trgYear, trgMonth - 1, trgDay, trgHour, trgMin, trgSec);
+  
+  try {
+    const resolvedTZ = timeZone === 'auto' ? undefined : timeZone;
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: resolvedTZ,
+      year: 'numeric',
+      month: 'numeric',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: 'numeric',
+      second: 'numeric',
+      hourCycle: 'h23'
+    });
+    
+    for (let i = 0; i < 3; i++) {
+      const formattedParts = formatter.formatToParts(new Date(guessMs));
+      const getVal = (type: string) => {
+        const p = formattedParts.find(item => item.type === type);
+        return p ? p.value : '0';
+      };
+      
+      const convYear = parseInt(getVal('year'));
+      const convMonth = parseInt(getVal('month'));
+      const convDay = parseInt(getVal('day'));
+      const convHour = parseInt(getVal('hour'));
+      const convMin = parseInt(getVal('minute'));
+      const convSec = parseInt(getVal('second'));
+      
+      const convMs = Date.UTC(convYear, convMonth - 1, convDay, convHour, convMin, convSec);
+      const diffMs = convMs - Date.UTC(trgYear, trgMonth - 1, trgDay, trgHour, trgMin, trgSec);
+      
+      if (diffMs === 0) break;
+      guessMs -= diffMs;
+    }
+    
+    return new Date(guessMs);
+  } catch (err) {
+    console.warn("parseTimeToAbsoluteDate failed with timezone", timeZone, err);
+    return new Date(guessMs);
+  }
+}
+
+export const getCurrentHourIndex = (timezone: string, hourlyTimes?: string[]) => {
+  try {
+    if (!hourlyTimes || hourlyTimes.length === 0) {
+      return new Date().getHours();
+    }
+    
+    const nowMs = Date.now();
+    let closestIndex = 0;
+    let minDiff = Infinity;
+    
+    for (let i = 0; i < hourlyTimes.length; i++) {
+      const hourlyDate = parseTimeToAbsoluteDate(hourlyTimes[i], timezone);
+      const diff = Math.abs(hourlyDate.getTime() - nowMs);
+      if (diff < minDiff) {
+        minDiff = diff;
+        closestIndex = i;
+      }
+    }
+    
+    return closestIndex;
+  } catch {
+    return new Date().getHours();
   }
 };
 
@@ -60,7 +179,7 @@ export const fetchAllWeatherData = async (lat: number, lon: number): Promise<any
     `&current=temperature_2m,relative_humidity_2m,` +
     `apparent_temperature,weather_code,` +
     `wind_speed_10m,wind_direction_10m,` +
-    `surface_pressure,precipitation` +
+    `surface_pressure,precipitation,visibility` +
     `&hourly=temperature_2m,weather_code,` +
     `precipitation_probability,precipitation,` +
     `wind_speed_10m,visibility,uv_index,` +
@@ -101,22 +220,14 @@ export const parseCurrentWeather = (res: any): any => {
 
   const c = res.current;
   const h = res.hourly;
-  let idx = 0;
-  if (h?.time) {
-    const nowMs = Date.now();
-    let minDiff = Infinity;
-    for (let i = 0; i < h.time.length; i++) {
-      const t = new Date(h.time[i]).getTime();
-      const diff = Math.abs(t - nowMs);
-      if (diff < minDiff) {
-        minDiff = diff;
-        idx = i;
-      }
-    }
-  }
+  
+  const timezone = res.timezone || 'UTC';
+  const idx = getCurrentHourIndex(timezone, h?.time);
 
   const precipProb = h?.precipitation_probability?.[idx] ?? 0;
-  const visibility = h?.visibility?.[idx] !== undefined ? (h.visibility[idx] / 1000).toFixed(1) : "10.0";
+  const visibility = c.visibility !== undefined 
+    ? (c.visibility / 1000).toFixed(1)
+    : (h?.visibility?.[idx] !== undefined ? (h.visibility[idx] / 1000).toFixed(1) : "10.0");
   const uvIndex = h?.uv_index?.[idx] ?? 0;
 
   const data = {
@@ -460,6 +571,7 @@ export async function fetchWeather(lat: number, lon: number, timezone: string, c
       visibility: Number(currentParsed?.visibility ?? 10) * 1000, 
       surfacePressure: currentParsed?.pressure ?? 1013,
       precipitation: res.current?.precipitation ?? 0,
+      uvIndex: currentParsed?.uvIndex ?? 0,
     },
     hourly: {
       time: res.hourly?.time || [],
@@ -471,6 +583,7 @@ export async function fetchWeather(lat: number, lon: number, timezone: string, c
       windDirection: res.hourly?.wind_direction_10m || [],
       windSpeed: res.hourly?.wind_speed_10m || [],
       precipitation: res.hourly?.precipitation || [],
+      uvIndex: res.hourly?.uv_index || [],
     },
     daily: {
       time: res.daily?.time || [],
@@ -488,18 +601,23 @@ export async function fetchWeather(lat: number, lon: number, timezone: string, c
       precipitationSum: res.daily?.precipitation_sum || [],
     },
     airQuality: {
-      usAqi: aqiData?.aqi ?? (cachedAqi?.usAqi ?? 0),
-      description: aqiData?.categoryLabel ?? (cachedAqi?.description ?? "Retrieving..."),
-      color: aqiData?.categoryColor ?? (cachedAqi?.color ?? "#94a3b8"),
-      recommendation: aqiData?.categoryRecommendation ?? (cachedAqi?.recommendation ?? "Reading station..."),
+      usAqi: aqiData?.usAqi ?? (cachedAqi?.usAqi ?? 0),
+      description: aqiData?.description ?? (cachedAqi?.description ?? "Retrieving..."),
+      color: aqiData?.color ?? (cachedAqi?.color ?? "#94a3b8"),
+      recommendation: aqiData?.recommendation ?? (cachedAqi?.recommendation ?? "Reading station..."),
       standard: aqiData?.standard ?? (cachedAqi?.standard ?? 'US'),
       standardLabel: aqiData?.standardLabel ?? (cachedAqi?.standardLabel ?? "AQI · US Standard"),
       pm2_5: aqiData?.pm2_5 ?? cachedAqi?.pm2_5,
       pm10: aqiData?.pm10 ?? cachedAqi?.pm10,
-      lastUpdated: aqiData?.time ?? (cachedAqi?.lastUpdated ?? new Date().toISOString()),
+      co: aqiData?.co ?? cachedAqi?.co,
+      no2: aqiData?.no2 ?? cachedAqi?.no2,
+      o3: aqiData?.o3 ?? cachedAqi?.o3,
+      so2: aqiData?.so2 ?? cachedAqi?.so2,
+      lastUpdated: aqiData?.lastUpdated ?? (cachedAqi?.lastUpdated ?? new Date().toISOString()),
       freshnessLabel: aqiData?.freshnessLabel ?? (cachedAqi?.freshnessLabel ?? "Live"),
       isUnavailable: aqiData ? aqiData.isUnavailable : (cachedAqi ? cachedAqi.isUnavailable : true),
       isStale: aqiData ? aqiData.isStale : (cachedAqi ? cachedAqi.isStale : false),
+      historicalAqi: aqiData?.historicalAqi ?? cachedAqi?.historicalAqi,
     },
     fetchedAt: Date.now(),
     timezone: resolvedTimezone,
@@ -515,9 +633,8 @@ export async function searchLocations(query: string): Promise<Location[]> {
   try {
     console.log('[RateLimiter] Running Open-Meteo Geocoding');
     const url = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(query)}&count=10`;
-    const response = await fetchWithTimeout(url, {}, 5000, 0);
-    if (!response.ok) return [];
-    const data = await response.json();
+    const data = await safeFetch(url);
+    if (!data) return [];
     const results = data.results || [];
     return results.map((item: any, idx: number) => ({
       id: item.id || (Date.now() + idx),
@@ -526,6 +643,7 @@ export async function searchLocations(query: string): Promise<Location[]> {
       longitude: item.longitude,
       country: item.country,
       admin1: item.admin1,
+      admin2: item.admin2,
       timezone: item.timezone || 'auto',
     }));
   } catch (err) {
@@ -769,21 +887,40 @@ export async function mapWAQIResultToAirQuality(waqiData: any, cityName: string,
     freshnessLabel: ageHrs > 6 ? `Stale (${Math.round(ageHrs)}h ago)` : "Live",
     isUnavailable: false,
     isStale: ageHrs > 6,
+    historicalAqi: undefined as { time: string; aqi: number }[] | undefined,
   };
 }
 
 export async function getAQIDataWithFallback(lat: number, lon: number, cityName: string, countryCode?: string) {
-  try {
-    const waqiRaw = await fetchAQI(cityName, lat, lon);
-    if (waqiRaw) {
-      const parsed = await mapWAQIResultToAirQuality(waqiRaw, cityName, countryCode);
-      if (parsed) return parsed;
+  const token = import.meta.env.VITE_WAQI_TOKEN || "demo";
+  const isDemo = token === "demo" || !import.meta.env.VITE_WAQI_TOKEN;
+  
+  if (!isDemo) {
+    try {
+      const waqiRaw = await fetchAQI(cityName, lat, lon);
+      if (waqiRaw) {
+        const parsed = await mapWAQIResultToAirQuality(waqiRaw, cityName, countryCode);
+        if (parsed) {
+          // Merge with OpenMeteo to fill in any missing or empty pollutant fields
+          const openMeteoRaw = await fetchOpenMeteoAQI(lat, lon, cityName, countryCode);
+          if (openMeteoRaw) {
+            parsed.pm2_5 = parsed.pm2_5 !== undefined && parsed.pm2_5 !== null ? parsed.pm2_5 : openMeteoRaw.pm2_5;
+            parsed.pm10 = parsed.pm10 !== undefined && parsed.pm10 !== null ? parsed.pm10 : openMeteoRaw.pm10;
+            parsed.co = parsed.co !== undefined && parsed.co !== null ? parsed.co : openMeteoRaw.co;
+            parsed.no2 = parsed.no2 !== undefined && parsed.no2 !== null ? parsed.no2 : openMeteoRaw.no2;
+            parsed.o3 = parsed.o3 !== undefined && parsed.o3 !== null ? parsed.o3 : openMeteoRaw.o3;
+            parsed.so2 = parsed.so2 !== undefined && parsed.so2 !== null ? parsed.so2 : openMeteoRaw.so2;
+            parsed.historicalAqi = openMeteoRaw?.historicalAqi;
+          }
+          return parsed;
+        }
+      }
+    } catch (err) {
+      console.warn(`WAQI fetch failed for ${cityName}, falling back:`, err);
     }
-  } catch (err) {
-    console.warn(`WAQI fetch failed for ${cityName}, falling back:`, err);
   }
   
-  console.log(`Falling back to OpenMeteo AQI for ${cityName}`);
+  console.log(`Using OpenMeteo AQI for ${cityName}`);
   const openMeteoRaw = await fetchOpenMeteoAQI(lat, lon, cityName, countryCode);
   if (openMeteoRaw) {
     return {
@@ -795,10 +932,15 @@ export async function getAQIDataWithFallback(lat: number, lon: number, cityName:
       standardLabel: openMeteoRaw.standardLabel,
       pm2_5: openMeteoRaw.pm2_5,
       pm10: openMeteoRaw.pm10,
+      co: openMeteoRaw.co,
+      no2: openMeteoRaw.no2,
+      o3: openMeteoRaw.o3,
+      so2: openMeteoRaw.so2,
       lastUpdated: openMeteoRaw.time,
       freshnessLabel: openMeteoRaw.freshnessLabel,
       isUnavailable: openMeteoRaw.isUnavailable,
       isStale: openMeteoRaw.isStale,
+      historicalAqi: openMeteoRaw.historicalAqi,
     };
   }
   return null;
@@ -806,27 +948,113 @@ export async function getAQIDataWithFallback(lat: number, lon: number, cityName:
 
 export async function fetchOpenMeteoAQI(lat: number, lon: number, cityName?: string, countryCode?: string) {
   try {
-    const url = `https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${lat}&longitude=${lon}&current=pm10,pm2_5,us_aqi`;
+    const url = `https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${lat}&longitude=${lon}` +
+      `&current=pm10,pm2_5,carbon_monoxide,nitrogen_dioxide,ozone,sulphur_dioxide,us_aqi` +
+      `&hourly=pm10,pm2_5,carbon_monoxide,nitrogen_dioxide,ozone,sulphur_dioxide,us_aqi` +
+      `&timezone=auto`;
+      
     const res = await safeFetch(url);
-    if (!res || !res.current) {
+    if (!res) {
       return null;
     }
 
-    const current = res.current;
-    const pm2_5 = current.pm2_5;
-    const pm10 = current.pm10;
-    const usAqiFromApi = current.us_aqi;
+    const current = res.current || {};
+    const hourly = res.hourly || {};
+    const timezone = res.timezone || 'UTC';
+
+    // Locate the current hour index from the hourly array for scanning fallbacks
+    const nowMs = Date.now();
+    let currentIdx = -1;
+    if (hourly.time && hourly.time.length > 0) {
+      let minDiff = Infinity;
+      for (let i = 0; i < hourly.time.length; i++) {
+        const hTime = parseTimeToAbsoluteDate(hourly.time[i], timezone);
+        const diff = Math.abs(hTime.getTime() - nowMs);
+        if (diff < minDiff) {
+          minDiff = diff;
+          currentIdx = i;
+        }
+      }
+    }
+
+    // Helper: returns current value, else scans backward up to 6 hours in hourly array
+    const getValWithFallback = (currentVal: any, hourlyKey: string): number | null => {
+      if (currentVal !== undefined && currentVal !== null) {
+        return currentVal;
+      }
+      if (currentIdx !== -1 && hourly[hourlyKey]) {
+        for (let offset = 0; offset <= 6; offset++) {
+          const checkIdx = currentIdx - offset;
+          if (checkIdx >= 0 && checkIdx < hourly[hourlyKey].length) {
+            const val = hourly[hourlyKey][checkIdx];
+            if (val !== undefined && val !== null) {
+              return val;
+            }
+          }
+        }
+      }
+      return null;
+    };
+
+    const pm2_5 = getValWithFallback(current.pm2_5, 'pm2_5');
+    const pm10 = getValWithFallback(current.pm10, 'pm10');
+    const co = getValWithFallback(current.carbon_monoxide, 'carbon_monoxide');
+    const no2 = getValWithFallback(current.nitrogen_dioxide, 'nitrogen_dioxide');
+    const o3 = getValWithFallback(current.ozone, 'ozone');
+    const so2 = getValWithFallback(current.sulphur_dioxide, 'sulphur_dioxide');
+    const usAqiFromApi = getValWithFallback(current.us_aqi, 'us_aqi');
 
     const standard = getAQIStandard(cityName || '', countryCode || '');
+    
+    // Calibrate Open-Meteo raw atmospheric concentrations for Indian cities (global model heavily over-forecasts soil/desert dust levels compared to ground-level monitors)
+    let pm2_5Calibrated = pm2_5;
+    let pm10Calibrated = pm10;
+    if (standard === "IN") {
+      if (typeof pm2_5 === 'number' && pm2_5 !== null) pm2_5Calibrated = pm2_5 * 0.55;
+      if (typeof pm10 === 'number' && pm10 !== null) pm10Calibrated = pm10 * 0.25;
+    }
+
     let finalAqi = 0;
 
     if (standard === "IN") {
-      finalAqi = calculateIndianAQI(pm2_5, pm10);
+      finalAqi = calculateIndianAQI(pm2_5Calibrated ?? undefined, pm10Calibrated ?? undefined);
     } else {
       finalAqi = typeof usAqiFromApi === 'number' ? usAqiFromApi : 0;
     }
 
     const category = getAQICategory(finalAqi, standard);
+
+    const historicalAqi: { time: string; aqi: number }[] = [];
+    if (hourly.time && hourly.time.length > 0) {
+      const refIdx = currentIdx !== -1 ? currentIdx : hourly.time.length - 1;
+      let startIdx = refIdx - 23;
+      let endIdx = refIdx;
+      if (startIdx < 0) {
+        startIdx = 0;
+        endIdx = Math.min(23, hourly.time.length - 1);
+      }
+
+      for (let i = startIdx; i <= endIdx; i++) {
+        const hTime = hourly.time[i];
+        const hPm2_5 = hourly.pm2_5 ? hourly.pm2_5[i] : null;
+        const hPm10 = hourly.pm10 ? hourly.pm10[i] : null;
+        const hUsAqi = hourly.us_aqi ? hourly.us_aqi[i] : null;
+
+        let hAqiVal = 0;
+        if (standard === "IN") {
+          const calPm2_5 = typeof hPm2_5 === 'number' && hPm2_5 !== null ? hPm2_5 * 0.55 : undefined;
+          const calPm10 = typeof hPm10 === 'number' && hPm10 !== null ? hPm10 * 0.25 : undefined;
+          hAqiVal = calculateIndianAQI(calPm2_5, calPm10);
+        } else {
+          hAqiVal = typeof hUsAqi === 'number' ? hUsAqi : 0;
+        }
+
+        historicalAqi.push({
+          time: hTime,
+          aqi: hAqiVal,
+        });
+      }
+    }
 
     return {
       aqi: finalAqi,
@@ -835,12 +1063,19 @@ export async function fetchOpenMeteoAQI(lat: number, lon: number, cityName?: str
       categoryRecommendation: category.recommendation,
       standard,
       standardLabel: standard === "IN" ? "AQI · India (NAQI)" : "AQI · US Standard",
-      time: current.time,
+      time: current.time 
+        ? parseTimeToAbsoluteDate(current.time, timezone).toISOString()
+        : new Date().toISOString(),
       freshnessLabel: "Live",
       isStale: false,
       isUnavailable: false,
-      pm10,
-      pm2_5,
+      pm10: pm10Calibrated,
+      pm2_5: pm2_5Calibrated,
+      co,
+      no2,
+      o3,
+      so2,
+      historicalAqi,
     };
   } catch (err) {
     console.warn('Open-Meteo AQI fetch failed:', err);
@@ -900,68 +1135,6 @@ export function getWeatherInfo(code: number, isDay: boolean = true) {
   if (code === 0) return { label: 'Clear Sky', icon: isDay ? 'Sun' : 'Moon' };
 
   return { label: 'Unknown', icon: 'Cloud' };
-}
-
-export function parseTimeToAbsoluteDate(timeStr: string, timeZone: string): Date {
-  if (!timeStr) return new Date();
-  
-  if (timeStr.includes('Z') || /[-+]\d{2}(:?\d{2})?$/.test(timeStr)) {
-    return new Date(timeStr);
-  }
-  
-  const match = timeStr.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?/);
-  if (!match) {
-    return new Date(timeStr);
-  }
-  
-  const trgYear = parseInt(match[1]);
-  const trgMonth = parseInt(match[2]);
-  const trgDay = parseInt(match[3]);
-  const trgHour = parseInt(match[4]);
-  const trgMin = parseInt(match[5]);
-  const trgSec = match[6] ? parseInt(match[6]) : 0;
-  
-  let guessMs = Date.UTC(trgYear, trgMonth - 1, trgDay, trgHour, trgMin, trgSec);
-  
-  try {
-    const resolvedTZ = timeZone === 'auto' ? undefined : timeZone;
-    const formatter = new Intl.DateTimeFormat('en-US', {
-      timeZone: resolvedTZ,
-      year: 'numeric',
-      month: 'numeric',
-      day: 'numeric',
-      hour: 'numeric',
-      minute: 'numeric',
-      second: 'numeric',
-      hourCycle: 'h23'
-    });
-    
-    for (let i = 0; i < 3; i++) {
-      const formattedParts = formatter.formatToParts(new Date(guessMs));
-      const getVal = (type: string) => {
-        const p = formattedParts.find(item => item.type === type);
-        return p ? p.value : '0';
-      };
-      
-      const convYear = parseInt(getVal('year'));
-      const convMonth = parseInt(getVal('month'));
-      const convDay = parseInt(getVal('day'));
-      const convHour = parseInt(getVal('hour'));
-      const convMin = parseInt(getVal('minute'));
-      const convSec = parseInt(getVal('second'));
-      
-      const convMs = Date.UTC(convYear, convMonth - 1, convDay, convHour, convMin, convSec);
-      const diffMs = convMs - Date.UTC(trgYear, trgMonth - 1, trgDay, trgHour, trgMin, trgSec);
-      
-      if (diffMs === 0) break;
-      guessMs -= diffMs;
-    }
-    
-    return new Date(guessMs);
-  } catch (err) {
-    console.warn("parseTimeToAbsoluteDate failed with timezone", timeZone, err);
-    return new Date(guessMs);
-  }
 }
 
 export function getLocalHourStartDates(timezone: string, count: number = 48): Date[] {
@@ -1033,31 +1206,6 @@ export function getClosestHourlyValue<T>(targetDate: Date, apiHourlyTimes: strin
   }
   return closestVal !== undefined ? closestVal : fallback;
 }
-
-export const getCurrentHourIndex = (timezone: string, hourlyTimes?: string[]) => {
-  try {
-    if (!hourlyTimes || hourlyTimes.length === 0) {
-      return new Date().getHours();
-    }
-    
-    const nowMs = Date.now();
-    let closestIndex = 0;
-    let minDiff = Infinity;
-    
-    for (let i = 0; i < hourlyTimes.length; i++) {
-      const hourlyDate = parseTimeToAbsoluteDate(hourlyTimes[i], timezone);
-      const diff = Math.abs(hourlyDate.getTime() - nowMs);
-      if (diff < minDiff) {
-        minDiff = diff;
-        closestIndex = i;
-      }
-    }
-    
-    return closestIndex;
-  } catch {
-    return new Date().getHours();
-  }
-};
 
 export const getMoonPhaseInfo = (_phase?: number) => {
   const date = new Date();

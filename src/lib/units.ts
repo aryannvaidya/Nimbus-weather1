@@ -28,8 +28,14 @@ export const convertVisibility = (meters: number, unit: 'km' | 'miles') => {
 
 export const formatVisibility = (meters: number, unit: 'km' | 'miles') => {
   const val = convertVisibility(meters, unit);
-  if (val < 1) return val.toFixed(1);
-  return Math.round(val);
+  if (unit === 'miles') {
+    // 15 miles is the standard vertical/horizontal meteorological ceiling in Open-Meteo
+    return Math.min(15, Math.round(val));
+  } else {
+    // 24 km is the standard metric meteorological ceiling for unlimited visibility
+    if (val < 1) return val.toFixed(1);
+    return Math.min(24, Math.round(val));
+  }
 };
 
 export const convertPrecipitation = (mm: number, unit: 'mm' | 'in') => {

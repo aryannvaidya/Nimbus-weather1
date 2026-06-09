@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { formatTemp } from './lib/units';
 import { Location, WeatherData, WeatherState, Settings } from './types';
-import { fetchWeather, fetchWeatherBulk, getMoonPhaseInfo, getCurrentHourIndex, reverseGeocode, getCurrentWeatherState, fetchAQI, mapWAQIResultToAirQuality, getDataAgeHours, getAQIFromCacheOrLive } from './services/weatherService';
+import { fetchWeather, fetchWeatherBulk, getMoonPhaseInfo, getCurrentHourIndex, reverseGeocode, getCurrentWeatherState, getAQIDataWithFallback, getDataAgeHours, getAQIFromCacheOrLive } from './services/weatherService';
 import { getCachedWeatherData, saveWeatherData, STORAGE_KEYS, getCityKey, CACHE_EXPIRY } from './lib/storage';
 import { initGestures } from './lib/gestures';
 import WeatherSkeleton from './components/WeatherSkeleton';
@@ -19,6 +19,13 @@ import WeatherRadarMap from './components/WeatherRadarMap';
 import AlertsDisplay from './components/AlertsDisplay';
 import { Haptic } from './lib/haptics';
 import { format } from 'date-fns';
+import { 
+  NotifSettings, 
+  scheduleMorningSummary, 
+  scheduleNightSummary, 
+  checkWeatherAlerts, 
+  applyNotifToggleStates 
+} from './services/oneSignalService';
 
 const DEFAULT_LOCATION: Location | null = null;
 
@@ -43,7 +50,15 @@ const INITIAL_SETTINGS: Settings = {
   timeFormat: '12h',
   pushEnabled: false,
   alertMorningSummary: false,
-  alertNightSummary: false
+  alertNightSummary: false,
+  enabledTiles: {
+    aqi: true,
+    uv: true,
+    humidity: true,
+    visibility: true,
+    precipitation: true,
+    wind: true
+  }
 };
 
 const LocationState = {
@@ -276,6 +291,16 @@ export default function App() {
         parsed.theme = 'black';
         if (!parsed.unitPrecipitation) parsed.unitPrecipitation = 'mm';
         if (parsed.iconStyle === '3d') parsed.iconStyle = 'outline';
+        if (!parsed.enabledTiles) {
+          parsed.enabledTiles = {
+            aqi: true,
+            uv: true,
+            humidity: true,
+            visibility: true,
+            precipitation: true,
+            wind: true
+          };
+        }
         cachedSettings = parsed;
       }
       
@@ -384,15 +409,9 @@ export default function App() {
     console.log("Fetching AQI for:", city.name);
 
     try {
-      const aqiRaw = await fetchAQI(city.name, city.latitude, city.longitude);
-      if (!aqiRaw) {
-        console.warn("AQI fetch returned null for:", city.name);
-        return;
-      }
-
-      const parsedAQI = await mapWAQIResultToAirQuality(aqiRaw, city.name, city.country);
+      const parsedAQI = await getAQIDataWithFallback(city.latitude, city.longitude, city.name, city.country);
       if (!parsedAQI) {
-        console.warn("AQI parse returned null for:", city.name);
+        console.warn("AQI fetch returned null for:", city.name);
         return;
       }
 
@@ -659,55 +678,8 @@ export default function App() {
   };
 
   const showPermissionDeniedNotice = () => {
-    let notice = document.getElementById("permission-notice");
-
-    if (!notice) {
-      notice = document.createElement("div");
-      notice.id = "permission-notice";
-      notice.style.cssText = `
-        position: fixed;
-        bottom: 80px;
-        left: 16px;
-        right: 16px;
-        background: #1e293b;
-        border: 1px solid #ff634740;
-        border-radius: 16px;
-        padding: 14px 16px;
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        z-index: 9999;
-        animation: slideUp 0.3s ease;
-      `;
-      notice.innerHTML = `
-        <span style="font-size:20px;">📍</span>
-        <div style="flex:1;">
-          <div style="font-size:13px;font-weight:600;color:white;margin-bottom:2px;">
-            Location access off
-          </div>
-          <div style="font-size:12px;color:#94a3b8;">
-            Turn on location in browser settings to get local weather
-          </div>
-        </div>
-        <button id="close-permission-notice" style="
-          background:transparent;border:none;
-          color:#64748b;font-size:18px;cursor:pointer;
-        ">×</button>
-      `;
-      document.body.appendChild(notice);
-
-      const closeBtn = document.getElementById("close-permission-notice");
-      if (closeBtn) {
-        closeBtn.onclick = () => {
-          notice?.remove();
-        };
-      }
-
-      // Auto dismiss after 5 seconds
-      setTimeout(() => {
-        if (notice && notice.parentNode) notice.remove();
-      }, 5000);
-    }
+    // No-op: Removed floating toast from the main screen as requested
+    // Instead, this sits elegantly below the search bar when geolocation access is disabled.
   };
 
   const checkLocationPermission = async () => {
@@ -906,13 +878,9 @@ export default function App() {
   };
 
   const fetchCurrentLocation = async (isBackground = false) => {
-    // STEP 1 — Check permission first
-    const permission = await checkLocationPermission();
-
-    if (permission === "denied") {
-      console.warn("Location permission denied");
-      if (!isBackground) showPermissionDeniedNotice();
-      stopLocationRefresh();
+    // STEP 1 — Check support
+    if (!navigator.geolocation) {
+      console.warn("Geolocation not supported by device");
       return null;
     }
 
@@ -1034,16 +1002,6 @@ export default function App() {
   };
 
   const startLocationSystem = async () => {
-    // Check permission first — don't do anything if denied
-    const permission = await checkLocationPermission();
-    console.log("Location permission:", permission);
-
-    if (permission === "denied") {
-      // Don't show page, don't fetch, just stop
-      console.log("Location denied — skipping");
-      return;
-    }
-
     // Restore previous location from cache
     const hasSaved = LocationState.load();
 
@@ -1233,6 +1191,9 @@ export default function App() {
     try {
       const data = await fetchWeather(location.latitude, location.longitude, location.timezone, location.name, location.country);
       saveWeatherData(cityKey, data);
+      
+      // Check weather alerts with OneSignal on every refresh/fetch
+      checkWeatherAlerts(data, location.name);
       
       setState(prev => {
         if (prev.locations.length <= index || prev.locations[index]?.name !== location.name) {
@@ -1567,6 +1528,8 @@ export default function App() {
           newWeatherData[absoluteIdx] = data as WeatherData;
           // Save to persistent cache
           saveWeatherData(getCityKey(locations[idx]), data as WeatherData);
+          // Check weather alerts with OneSignal on every refresh/fetch
+          checkWeatherAlerts(data as WeatherData, locations[idx].name);
         });
 
         return {
@@ -1649,61 +1612,144 @@ export default function App() {
     
     console.log("Current hour index:", hourIndex);
     console.log("Current precip %:", w.hourly.precipitationProbability[hourIndex]);
-    console.log("Next hour precip %:", w.hourly.precipitationProbability[hourIndex + 1]);
     console.log("Timezone:", w.timezone);
 
-    // 1. Rain Alerts
-    const nextHourIndex = hourIndex + 1;
-    const nextRainProb = w.hourly.precipitationProbability[nextHourIndex] || 0;
-    if (s.alertRain && nextRainProb >= 70) {
+    // 1. Rain Alerts (Checks if rain is forecast in next 12 hours matching user's custom rainThreshold)
+    let hasRainForecast = false;
+    let maxRainProb = 0;
+    const isRainCode = (code: number) => (code >= 51 && code <= 67) || (code >= 80 && code <= 82);
+    
+    for (let i = hourIndex; i < Math.min(hourIndex + 12, w.hourly.time.length); i++) {
+      const code = w.hourly.weatherCode?.[i] || w.hourly.weathercode?.[i] || 0;
+      const prob = w.hourly.precipitationProbability?.[i] || 0;
+      if (prob >= s.rainThreshold) {
+        if (isRainCode(code) || code === 0 || !w.hourly.weatherCode) {
+          hasRainForecast = true;
+          if (prob > maxRainProb) {
+            maxRainProb = prob;
+          }
+        }
+      }
+    }
+    
+    if (!hasRainForecast && s.alertRain) {
+      for (let i = hourIndex; i < Math.min(hourIndex + 12, w.hourly.time.length); i++) {
+        const prob = w.hourly.precipitationProbability?.[i] || 0;
+        const temp = w.hourly.temperature?.[i] || w.hourly.temperature_2m?.[i] || 15;
+        if (prob >= s.rainThreshold && temp > 2) {
+          hasRainForecast = true;
+          if (prob > maxRainProb) {
+            maxRainProb = prob;
+          }
+        }
+      }
+    }
+
+    if (s.alertRain && hasRainForecast && maxRainProb >= s.rainThreshold) {
       alerts.push({
         id: 'rain-alert',
         type: 'rain',
         title: '🌧️ Rain Expected',
-        message: `${nextRainProb}% chance of rain soon.`
+        message: `${maxRainProb}% chance of rain in the forecast.`
       });
     }
 
-    // 2. Snow Alerts
-    const snowAmount = w.hourly.snowfall?.[hourIndex] || 0;
-    if (s.alertDaily && snowAmount > 0) { // Using daily alert toggle for snow too
-       alerts.push({
-        id: 'snow-alert',
-        type: 'storm',
-        title: 'Snowfall Warning',
-        message: 'Snow is currently predicted in your area.'
-      });
-    }
-
-    // 3. Thunderstorm check
-    if (s.stormThreshold && [95, 96, 99].includes(w.current.weatherCode)) {
-      const isSevere = w.current.weatherCode === 99 || w.current.windSpeed > 20; // 20m/s (~72km/h) is very high
+    // 2. Snow Alerts (Checks if snow is forecast in next 12 hours matching user's custom snowThreshold)
+    let hasSnowForecast = false;
+    let maxSnowProb = 0;
+    const isSnowCode = (code: number) => [71, 73, 75, 77, 85, 86].includes(code);
+    
+    for (let i = hourIndex; i < Math.min(hourIndex + 12, w.hourly.time.length); i++) {
+      const code = w.hourly.weatherCode?.[i] || w.hourly.weathercode?.[i] || 0;
+      const snowfall = w.hourly.snowfall?.[i] || 0;
+      const prob = w.hourly.precipitationProbability?.[i] || 0;
       
+      if (isSnowCode(code) || snowfall > 0) {
+        if (prob >= s.snowThreshold) {
+          hasSnowForecast = true;
+          if (prob > maxSnowProb) {
+            maxSnowProb = prob;
+          }
+        }
+      }
+    }
+    
+    if (!hasSnowForecast && s.alertDaily) {
+      for (let i = hourIndex; i < Math.min(hourIndex + 12, w.hourly.time.length); i++) {
+        const prob = w.hourly.precipitationProbability?.[i] || 0;
+        const temp = w.hourly.temperature?.[i] || w.hourly.temperature_2m?.[i] || 0;
+        if (prob >= s.snowThreshold && temp <= 2 && prob > 0) {
+          hasSnowForecast = true;
+          if (prob > maxSnowProb) {
+            maxSnowProb = prob;
+          }
+        }
+      }
+    }
+
+    if (s.alertDaily && hasSnowForecast && maxSnowProb >= s.snowThreshold) {
+      alerts.push({
+        id: 'snow-alert',
+        type: 'snow',
+        title: '❄️ Snowfall Warning',
+        message: `${maxSnowProb}% chance of snow in the forecast.`
+      });
+    }
+
+    // 3. Thunderstorm check (Checks if thunderstorm is active or forecast in next 12 hours)
+    let hasStormForecast = [95, 96, 99].includes(w.current.weatherCode);
+    let stormCode = w.current.weatherCode;
+    
+    if (!hasStormForecast) {
+      for (let i = hourIndex; i < Math.min(hourIndex + 12, w.hourly.time.length); i++) {
+        const code = w.hourly.weatherCode?.[i] || w.hourly.weathercode?.[i] || 0;
+        if ([95, 96, 99].includes(code)) {
+          hasStormForecast = true;
+          stormCode = code;
+          break;
+        }
+      }
+    }
+
+    if (s.stormThreshold && hasStormForecast) {
+      const isSevere = stormCode === 99 || w.current.windSpeed > 15;
       if (isSevere) {
         alerts.push({
           id: 'severe-storm-alert',
           type: 'severe_storm',
-          title: 'Severe Thunderstorm',
-          message: 'Intense thunderstorm with potential for heavy hail or damaging winds.'
+          title: '⛈️ Severe Thunderstorm',
+          message: 'Intense thunderstorm with potential for heavy precip or damaging winds.'
         });
       } else {
         alerts.push({
           id: 'storm-alert',
           type: 'storm',
-          title: 'Thunderstorm Warning',
-          message: 'A thunderstorm is currently being observed in your area.'
+          title: '🌩️ Thunderstorm Warning',
+          message: 'A thunderstorm is expected or active in your area.'
         });
       }
     }
 
-    // 4. Severe weather (Using weather codes for heavy storms/hail)
-    // We remove 99 from here to avoid duplicate alerts, as it's now handled by severe_storm
-    if (s.alertSevere && [82, 86].includes(w.current.weatherCode)) {
+    // 4. Severe weather (Checks for heavy storms/hail, wind, or extreme temperatures in next 12 hours)
+    let hasSevereForecast = [82, 86].includes(w.current.weatherCode) || w.current.windSpeed > 20 || w.current.temperature > 40 || w.current.temperature < -15;
+    
+    if (!hasSevereForecast) {
+      for (let i = hourIndex; i < Math.min(hourIndex + 12, w.hourly.time.length); i++) {
+        const code = w.hourly.weatherCode?.[i] || w.hourly.weathercode?.[i] || 0;
+        const temp = w.hourly.temperature?.[i] || w.hourly.temperature_2m?.[i] || 0;
+        if ([82, 86].includes(code) || temp > 40 || temp < -15) {
+          hasSevereForecast = true;
+          break;
+        }
+      }
+    }
+
+    if (s.alertSevere && hasSevereForecast) {
       alerts.push({
         id: 'severe-alert',
         type: 'severe',
-        title: 'Severe Weather Warning',
-        message: 'Extreme precipitation or conditions detected.'
+        title: '⚠️ Severe Weather Warning',
+        message: 'Extreme precipitation or temperatures detected.'
       });
     }
 
@@ -1762,7 +1808,7 @@ export default function App() {
   
   // Back button handling logic
   const panelStackRef = useRef<(() => void)[]>([]);
-  const isProgrammaticBackRef = useRef(false);
+  const panelNamesRef = useRef<string[]>([]);
 
   useEffect(() => {
     // 1. Initialize on app start: Push an initial state so the first back press doesn't immediately exit
@@ -1770,22 +1816,56 @@ export default function App() {
       window.history.pushState({ panel: "home" }, "");
     }
 
+    // Initialize notification states and startup alert schedulers
+    applyNotifToggleStates();
+    if (NotifSettings.morningEnabled) {
+      scheduleMorningSummary();
+    }
+    if (NotifSettings.nightEnabled) {
+      scheduleNightSummary();
+    }
+
     let backPressCount = 0;
     let toastTimer: any = null;
 
     // 2. Global popstate listener to handle back button
     const handlePopState = (e: PopStateEvent) => {
-      if (isProgrammaticBackRef.current) {
-        isProgrammaticBackRef.current = false;
+      const targetPanel = e.state?.panel || 'home';
+      const currentPanel = panelNamesRef.current[panelNamesRef.current.length - 1] || 'home';
+
+      // If already matching, don't double pop
+      if (currentPanel === targetPanel) {
         return;
       }
 
-      if (panelStackRef.current.length > 0) {
+      // If the target panel is not in our track stack and is not 'home',
+      // it means this history point was already closed programmatically in the UI.
+      // So we should ignore this popstate event to avoid double-dismissing or closing incorrect panels.
+      if (panelNamesRef.current.indexOf(targetPanel) === -1 && targetPanel !== 'home') {
+        return;
+      }
+
+      if (panelNamesRef.current.length > 0) {
         backPressCount = 0;
         setShowExitToast(false);
-        // Close the topmost open panel
-        const closePanel = panelStackRef.current.pop();
-        if (closePanel) closePanel();
+
+        // Keep popping until we match the target state or are empty
+        while (panelNamesRef.current.length > 0) {
+          const topName = panelNamesRef.current[panelNamesRef.current.length - 1];
+          if (topName === targetPanel) {
+            break;
+          }
+
+          panelNamesRef.current.pop();
+          const closePanel = panelStackRef.current.pop();
+          if (closePanel) {
+            closePanel();
+          }
+
+          if (targetPanel === 'home' && panelNamesRef.current.length === 0) {
+            break;
+          }
+        }
       } else {
         // Handle exit confirmation on home screen
         backPressCount++;
@@ -1813,13 +1893,14 @@ export default function App() {
   const pushPanel = (closeFn: () => void, name: string) => {
     window.history.pushState({ panel: name }, "");
     panelStackRef.current.push(closeFn);
+    panelNamesRef.current.push(name);
   };
 
   const handleBack = () => {
     if (panelStackRef.current.length > 0) {
+      panelNamesRef.current.pop();
       const closePanel = panelStackRef.current.pop();
       if (closePanel) {
-        isProgrammaticBackRef.current = true;
         closePanel();
       }
       try {
@@ -2049,19 +2130,7 @@ export default function App() {
             settings={state.settings}
           />
 
-          <div className="flex flex-col items-center gap-6 text-center mt-16 mb-24 opacity-30 select-none">
-            <div className="h-[1px] w-12 bg-app-text/10" />
-            <div className="flex flex-col gap-2">
-              <div className="flex items-center justify-center gap-2">
-                <div className="p-1 rounded-md bg-app-text/5 border border-app-border/50">
-                  <Icons.ShieldCheck className="w-3 h-3" />
-                </div>
-                <p className="text-[10px] text-app-text font-black uppercase tracking-[0.25em]">
-                  Verified Source
-                </p>
-              </div>
-            </div>
-          </div>
+          <div className="h-24" />
         </div>
       </motion.div>
     );
@@ -2161,12 +2230,13 @@ export default function App() {
           >
             <motion.div className="absolute left-6 top-8 pointer-events-auto">
               <motion.button 
+                id="radar-map-btn"
                 onClick={() => {
-                  Haptic.light(state.settings.hapticEnabled);
-                  setShowCityManager(true);
-                  pushPanel(() => setShowCityManager(false), 'citymanager');
+                  Haptic.medium(state.settings.hapticEnabled);
+                  setShowRadarMap(true);
+                  pushPanel(() => setShowRadarMap(false), 'radarmap');
                 }}
-                className="w-12 h-12 bg-app-text/5 border border-app-border rounded-full flex items-center justify-center text-app-text active:scale-95 transition-all shadow-xl"
+                className="w-12 h-12 bg-white/10 border border-white/20 backdrop-blur-md rounded-full flex items-center justify-center text-app-text shadow-xl active:scale-95 transition-all"
                 initial={false}
                 animate={{
                   opacity: state.showSettings || showCityManager || showRadarMap || isSwiping || isSwipeCommitted ? 0 : 1,
@@ -2176,28 +2246,6 @@ export default function App() {
                 transition={{ 
                   duration: (isSwiping || isSwipeCommitted) ? 0 : 0.12 
                 }}
-              >
-                <Icons.LayoutGrid className="w-5 h-5 text-app-text-dim" strokeWidth={1.5} />
-              </motion.button>
-            </motion.div>
-
-            {/* Live Radar Map Button - Top Right (Shifted Left) */}
-            <motion.div className="absolute right-20 top-8 pointer-events-auto">
-              <motion.button 
-                id="radar-map-btn"
-                onClick={() => {
-                  Haptic.medium(state.settings.hapticEnabled);
-                  setShowRadarMap(true);
-                  pushPanel(() => setShowRadarMap(false), 'radarmap');
-                }}
-                className="w-12 h-12 bg-app-text/5 border border-app-border rounded-full flex items-center justify-center text-app-text shadow-xl active:scale-95 transition-all"
-                initial={false}
-                animate={{
-                  opacity: state.showSettings || showCityManager || showRadarMap || isSwiping || isSwipeCommitted ? 0 : 1,
-                  pointerEvents: state.showSettings || showCityManager || showRadarMap || isSwiping || isSwipeCommitted ? 'none' : 'auto',
-                  scale: state.showSettings || showCityManager || showRadarMap ? 0.8 : 1,
-                }}
-                transition={{ duration: (isSwiping || isSwipeCommitted) ? 0 : 0.12 }}
               >
                 <Icons.Map className="w-5 h-5 text-app-text-dim hover:text-app-text transition-colors" />
               </motion.button>
@@ -2212,9 +2260,9 @@ export default function App() {
                   state.showSettings ? 'h-12 px-1' : 'w-12 h-12'
                 }`}
                 animate={{
-                  opacity: showCityManager || showRadarMap || isSwiping || isSwipeCommitted ? 0 : 1,
-                  pointerEvents: showCityManager || showRadarMap || isSwiping || isSwipeCommitted ? 'none' : 'auto',
-                  scale: showCityManager || showRadarMap ? 0.8 : 1,
+                  opacity: state.showSettings || showCityManager || showRadarMap || isSwiping || isSwipeCommitted ? 0 : 1,
+                  pointerEvents: state.showSettings || showCityManager || showRadarMap || isSwiping || isSwipeCommitted ? 'none' : 'auto',
+                  scale: state.showSettings || showCityManager || showRadarMap ? 0.8 : 1,
                 }}
                 transition={{ duration: (isSwiping || isSwipeCommitted) ? 0 : 0.12 }}
               >
@@ -2236,7 +2284,7 @@ export default function App() {
                       initial={{ opacity: 0, scale: 0.8 }}
                       animate={{ opacity: 1, scale: 1 }}
                       exit={{ opacity: 0, scale: 0.8 }}
-                      className="w-12 h-12 bg-app-text/5 border border-app-border rounded-full flex items-center justify-center text-app-text-dim group-hover:text-app-text transition-colors shadow-xl"
+                      className="w-12 h-12 bg-white/10 border border-white/20 backdrop-blur-md rounded-full flex items-center justify-center text-app-text-dim group-hover:text-app-text transition-colors shadow-xl"
                     >
                       <Icons.Settings2 className="w-5 h-5" />
                     </motion.div>
@@ -2245,25 +2293,10 @@ export default function App() {
               </motion.button>
             </motion.div>
 
-            <div id="refresh-indicator" style={{
-              position: 'absolute',
-              top: '50%',
-              right: '60px',
-              transform: 'translateY(-50%)',
-              display: 'none',
-            }} className="pointer-events-none select-none">
-              <div id="refresh-spinner" style={{
-                width: '18px',
-                height: '18px',
-                border: '2px solid rgba(255, 255, 255, 0.12)',
-                borderTop: '2px solid #ffffff',
-                borderRadius: '50%',
-                animation: 'spin 0.8s linear infinite',
-              }}></div>
-            </div>
+
 
             {/* City Name & Pagination - Center */}
-            <div className="absolute left-1/2 -translate-x-1/2 top-8 flex flex-col items-center pointer-events-none mt-2">
+            <div className="absolute top-8 flex flex-col items-center pointer-events-none mt-2" style={{ left: '50%', transform: 'translateX(-50%)' }}>
               {state.locations.length > 0 && (
                 <motion.div 
                   key="city-header-persistent"
@@ -2274,19 +2307,34 @@ export default function App() {
                   transition={{ duration: 0.15 }}
                   className="flex flex-col items-center justify-center"
                 >
-                  <div className="flex items-center gap-1.5 justify-center relative">
-                    <span id="city-name" className="text-[17px] font-semibold text-app-text">{activeLocation?.name || 'Loading...'}</span>
-                    <span id="location-pin-icon" style={{ display: activeLocation?.isCurrentLocation ? "inline" : "none" }}>📍</span>
+                  <div className="flex items-center justify-center relative pointer-events-auto select-none gap-1.5">
+                    <div className="flex items-center gap-1.5">
+                      <span id="city-name" className="text-[17px] font-semibold text-white/95">{activeLocation?.name || 'Loading...'}</span>
+                      {activeLocation?.isCurrentLocation && <span id="location-pin-icon" className="text-[14px]">📍</span>}
+                    </div>
+                    <div className="absolute left-full ml-1.5 flex items-center justify-center">
+                      <button 
+                        onClick={() => {
+                          Haptic.medium(state.settings.hapticEnabled);
+                          setShowCityManager(true);
+                          pushPanel(() => setShowCityManager(false), 'citymanager');
+                        }}
+                        className="text-white/60 hover:text-white active:scale-90 transition-all duration-150 cursor-pointer focus:outline-none flex items-center justify-center p-1"
+                        title="Edit Cities"
+                      >
+                        <Icons.Pencil className="w-3.5 h-3.5" strokeWidth={2.2} />
+                      </button>
+                    </div>
                   </div>
                     
                     {isOffline && (
                       <motion.div 
                         initial={{ opacity: 0, scale: 0.8 }}
                         animate={{ opacity: 1, scale: 1 }}
-                        className="flex items-center gap-1 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-full mt-1"
+                        className="flex items-center gap-1 px-2.5 py-0.5 rounded-full mt-1 bg-white/10 border border-white/20 backdrop-blur-md"
                       >
-                        <Icons.CloudOff className="w-2.5 h-2.5 text-amber-500" />
-                        <span className="text-[9px] font-bold text-amber-500 uppercase tracking-widest">Offline</span>
+                        <Icons.CloudOff className="w-2.5 h-2.5 text-white" strokeWidth={2.5} />
+                        <span className="text-[9px] font-bold text-white uppercase tracking-widest">OFFLINE</span>
                       </motion.div>
                     )}
 
@@ -2483,26 +2531,7 @@ export default function App() {
           }}>Adding current location...</div>
         </div>
 
-        {/* Pull to refresh logic handled by gestures.ts */}
-        
-        <AnimatePresence>
-
-
-          {isOffline && (
-            <motion.div 
-              initial={{ opacity: 0, y: -10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              className="mb-6 p-4 bg-orange-500/10 border border-orange-500/20 rounded-2xl flex items-center gap-3 relative"
-            >
-              <div className="w-2 h-2 bg-orange-500 rounded-full animate-pulse" />
-              <div className="flex flex-col">
-                <p className="text-[11px] font-black text-orange-500 uppercase tracking-widest leading-none mb-1">Offline Mode</p>
-                <p className="text-[12px] text-app-text-dim">You're viewing cached data. Reconnect to sync.</p>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
+         {/* Pull to refresh logic handled by gestures.ts */}
 
         {activeWeather && (
           <AlertsDisplay 

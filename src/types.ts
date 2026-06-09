@@ -28,6 +28,7 @@ export interface WeatherData {
     visibility: number;
     surfacePressure: number;
     precipitation: number;
+    uvIndex: number;
   };
   hourly: {
     time: string[];
@@ -40,6 +41,7 @@ export interface WeatherData {
     windSpeed?: number[];
     snowfall?: number[];
     precipitation?: number[];
+    uvIndex?: number[];
   };
   daily: {
     time: string[];
@@ -71,6 +73,7 @@ export interface WeatherData {
     so2?: number;
     o3?: number;
     co?: number;
+    historicalAqi?: { time: string; aqi: number }[];
   };
   fetchedAt: number; // local timestamp when data was fetched
   timezone: string;
@@ -99,6 +102,14 @@ export interface Settings {
   alertMorningSummary: boolean;
   alertNightSummary: boolean;
   oneSignalPlayerId?: string;
+  enabledTiles?: {
+    aqi: boolean;
+    uv: boolean;
+    humidity: boolean;
+    visibility: boolean;
+    precipitation: boolean;
+    wind: boolean;
+  };
 }
 
 export interface WeatherState {
