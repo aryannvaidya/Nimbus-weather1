@@ -26,7 +26,7 @@ Nimbus weather is a clean, dark-themed weather PWA featuring real-time weather, 
 
 ## Screenshots
 
-<div align="center">
+<div align="left">
 
 <img src="screenshots/main.png" width="30%"/>
 &nbsp;
