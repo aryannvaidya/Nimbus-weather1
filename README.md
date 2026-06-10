@@ -1,4 +1,6 @@
-# Nimbus Black🌤️
+Nimbus Black
+
+# Nimbus Weather🌤️
 ### *Real-time weather, beautifully simple.* 
 
 ![Static Badge](https://img.shields.io/badge/License-MIT-green?style=flat-square)
@@ -22,10 +24,23 @@ Nimbus weather is a clean, dark-themed weather PWA featuring real-time weather, 
 
 ---
 
-## 🌐 Live Demo
+## Screenshots
 
-**[https://nimbus-weather1.vercel.app/](https://nimbus-weather1.vercel.app///)**
+<div align="center">
 
+<img src="screenshots/main.png" width="30%"/>
+&nbsp;
+<img src="screenshots/main.png" width="30%"/>
+&nbsp;
+<img src="screenshots/forecast.png" width="30%"/>
+
+<br/><br/>
+
+<img src="screenshots/liveradar.png" width="30%"/>
+&nbsp;
+<img src="screenshots/aqi.png" width="30%"/>
+&nbsp;
+<img src="screenshots/cards.png" width="30%"/>
 ---
 
 ## 🛠️ Built With
@@ -105,5 +120,5 @@ vayu-weather/
 
 ## 📄 License
 
-MIT License — free to use, modify and distribute.
+This project is licensed under the MIT License.
 
