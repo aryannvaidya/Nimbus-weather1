@@ -1,5 +1,3 @@
-
-
 # Nimbus Black🌤️
 ### *Real-time weather, beautifully simple.* 
 
@@ -43,6 +41,7 @@ Nimbus weather is a clean, dark-themed weather PWA featuring real-time weather, 
 &nbsp;
 <img src="screenshot/manage.jpg" width="30%"/>
 
+</div>
 
 ## 🛠️ Built With
 
@@ -119,5 +118,4 @@ vayu-weather/
 ## 📄 License
 
 This project is licensed under the MIT License.
-
 
